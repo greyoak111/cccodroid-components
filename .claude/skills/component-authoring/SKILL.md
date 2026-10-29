@@ -36,6 +36,7 @@ description: 给 cccodroid 组件市场写新组件或改已有组件（recipes/
 - **下载必须核对哈希**：脚本里只要有 `curl`/`wget`/`urlopen`/`requests.get` 之类的下载，就得在同一个文件里核对 sha256。
   对照 `recipes/gpu-driver-glibc/lib/fetch-glibc-toolchain.py`：从官方仓库的 `Packages` 索引拿 SHA256，下完核对，不符就失败。
 - **`fetch`**：只能 https；sha256 写全 64 位；必须写 `why`；不能指向本市场仓库（Release、raw、codeload 都算）；`link` 只能写同目录文件名。
+  上游压缩包用 `extract`（键写落地目录、以 `/` 结尾）：sha256 核对的是压缩包，`include` 尽量写，上游 glibc 动态程序解进 `usr/glibc/opt/<组件>/`；细则见 `docs/recipe.md`「上游压缩包：`extract`」。
 - **不提交 `__pycache__/`、`.pyc`**（已在 `.gitignore`）。
 - **骁龙专用要声明**：`roots` 里有 `mesa-vulkan-icd-freedreno*`、`clvk*`、厂商 OpenCL 的，`needs.gpu` 必须是 `"adreno"`；
   `requires` 了骁龙专用组件的，自己也必须写 `"adreno"`（不然 App 在别家设备上显示能装，依赖却永远装不上）。

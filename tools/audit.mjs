@@ -212,7 +212,7 @@ for (const id of ids) {
   // 逐文件：ELF、shebang、残留路径
   const elfGraph = new Map();                        // ELF 路径 → { exe, deps: 解析到本组件里的库路径 }
   const vendor = new Map();
-  const missing = new Map(), offPath = new Map(), foreign = [], badInterp = [], residue = [], badShebang = [], envShebang = [];
+  const missing = new Map(), offPath = new Map(), foreign = [], badInterp = [], upInterp = [], residue = [], badShebang = [], envShebang = [];
   let elfs = 0;
   for (const e of readTar(b.tar)) {
     if (e.type !== "0" && e.type !== "7") continue;
@@ -223,7 +223,10 @@ for (const id of ids) {
       elfs++;
       if (info.bits !== 64 || info.machine !== 183) { foreign.push(`${e.name}（${info.bits} 位，机器号 ${info.machine}）`); continue; }
       const glibc = /\/glibc\//.test(info.interp || "") || e.name.startsWith("usr/glibc/");
-      if (info.interp && info.interp !== "/system/bin/linker64" && !has(rel(info.interp))) badInterp.push(`${e.name} → ${info.interp}`);
+      // 上游的 glibc 程序（fetch 解包进 usr/glibc/opt/）：解释器写死 /lib/ld-linux-aarch64.so.1，安卓上没有，
+      // 只能由包装脚本经 $PREFIX/glibc/lib/ld-linux-aarch64.so.1 启动 —— 放在这里且是这个路径的只提醒，别处的照常拦
+      const upstream = e.name.startsWith("usr/glibc/opt/") && info.interp === "/lib/ld-linux-aarch64.so.1";
+      if (info.interp && info.interp !== "/system/bin/linker64" && !has(rel(info.interp))) (upstream ? upInterp : badInterp).push(`${e.name} → ${info.interp}`);
       const dirs = [...info.runpath.map((p) => rel(p.replace(/\$\{?ORIGIN\}?/g, PFX + dirOf(e.name)))),
         glibc ? "usr/glibc/lib" : "usr/lib", dirOf(e.name)].map((p) => path.posix.normalize(p.replace(/^\//, "")));
       const node = { exe: !!info.interp, deps: [] };
@@ -260,6 +263,7 @@ for (const id of ids) {
   const [missHard, missSoft] = split(missing);
   const shHard = badShebang.filter((x) => vital(x.split(" → ")[0])), shSoft = badShebang.filter((x) => !vital(x.split(" → ")[0]));
   if (foreign.length) (foreign.some((f) => /^usr\/(bin|lib|glibc\/(bin|lib))\//.test(f)) ? errs : warns).push(`不是 arm64 的 ELF ${foreign.length} 个：${foreign.slice(0, 3).join("、")}`);
+  if (upInterp.length) warns.push(`${upInterp.length} 个上游 glibc 程序的解释器是 /lib/ld-linux-aarch64.so.1（安卓上没有）：包装脚本必须经 $PREFIX/glibc/lib/ld-linux-aarch64.so.1 启动，如 ${upInterp[0]}`);
   if (badInterp.length) errs.push(`解释器（动态链接器）找不到：${badInterp.slice(0, 3).join("、")}`);
   if (missSoft.size) warns.push(`包里附带的程序有 ${missSoft.size} 个库找不到（不是入口，不拦）：` + [...missSoft].slice(0, 4).map(([n, by]) => `\`${n}\` ← ${by[0]}`).join("、"));
   if (vendor.size) warns.push(`链了设备厂商的库（只有部分设备有，没有的设备上这部分用不了）：` + [...vendor].map(([n, by]) => `\`${n}\` ← ${by[0]}`).join("、"));

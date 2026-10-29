@@ -67,6 +67,19 @@ for (const r of recipes()) {
     if (!/^[0-9a-f]{64}$/.test(f.sha256 || "")) err(n, `fetch 的 sha256 要写全（64 位小写十六进制）: ${p}`);
     if (!f.why) err(n, `fetch 要写 why：这是什么、为什么不能走 Termux 官方仓库: ${p}`);
     if (f.mode !== undefined && !/^[0-7]{3,4}$/.test(String(f.mode))) err(n, `fetch 的 mode 是八进制三位/四位: ${p}`);
+    // 上游压缩包：键是落地目录（以 / 结尾），按 strip / include 取一部分。和 devkit 的 archiveFormat 同一套规矩
+    if ((f.extract !== undefined) !== p.endsWith("/")) { err(n, `fetch 解压包的键要以 / 结尾（落地目录），且要写 extract: ${p}`); continue; }
+    if (f.extract === undefined) continue;
+    const x = f.extract;
+    if (!x || typeof x !== "object" || Array.isArray(x)) { err(n, `fetch 的 extract 要写成对象（可以是 {}）: ${p}`); continue; }
+    if (f.mode !== undefined) err(n, `fetch 解压包不收 mode（权限取包里的，补执行位用 extract.exec）: ${p}`);
+    for (const k of Object.keys(x)) if (!["format", "strip", "include", "exec"].includes(k)) err(n, `fetch 的 extract 不认 ${k}: ${p}`);
+    if (x.strip !== undefined && !(Number.isInteger(x.strip) && x.strip >= 0 && x.strip <= 5)) err(n, `extract.strip 是 0–5 的整数: ${p}`);
+    const relOk = (s) => typeof s === "string" && s && !s.startsWith("/") && !s.split("/").includes("..");
+    for (const k of ["include", "exec"]) if (x[k] !== undefined && !(Array.isArray(x[k]) && x[k].length && x[k].every(relOk))) err(n, `extract.${k} 要写成相对路径的数组（不许绝对路径、不许 ..）: ${p}`);
+    const fmt = x.format || (/^https:/.test(f.url || "") && (/\.(tar\.gz|tgz|tar\.xz|txz|tar\.bz2|tbz2?|tar|zip)$/.exec(new URL(f.url).pathname) || [])[1]);
+    if (!/^(tar\.gz|tgz|tar\.xz|txz|tar\.bz2|tbz2?|tar|zip)$/.test(fmt || "")) err(n, `认不出压缩格式，写 extract.format（tar.gz / tar.xz / tar.bz2 / tar / zip）: ${p}`);
+    else if (x.format && !["tar.gz", "tar.xz", "tar.bz2", "tar", "zip"].includes(x.format)) err(n, `extract.format 只能是 tar.gz / tar.xz / tar.bz2 / tar / zip: ${p}`);
   }
   // npm：Termux 官方仓库没有、只在 npm 上发布的 Node 程序（如 wrangler）。CI 用 npm ci 按配方里提交的
   // package-lock.json 装 —— 所以锁文件必须在、每个包都来自官方 registry 且带完整性哈希、顶层版本钉死

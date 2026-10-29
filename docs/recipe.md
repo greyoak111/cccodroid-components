@@ -74,6 +74,39 @@ SHA256，CI 下载核对后打进包里。规则见下面「`fetch`：仓库外�
 - 只放**这个组件自己**运行要用的东西，不要顺手捎带别的工具；许可证必须允许再分发。
 - `roots` 照写（决定跟着哪个底座打包、`roots[0]` 也是版本基准之一）；底座里已有的包不会重复打。
 
+### 上游压缩包：`extract`
+
+上游多半把 linux-aarch64 的程序打成压缩包发布（`d2-v0.9.0-linux-arm64.tar.gz` 这种）。这时**键写落地目录（以 `/` 结尾）**，
+再加一个 `extract`，CI 下载、核对哈希后解开，按规则取一部分放进去：
+
+```jsonc
+"fetch": {
+  "usr/lib/d2/": {
+    "url": "https://github.com/terrastruct/d2/releases/download/v0.9.0/d2-v0.9.0-linux-arm64.tar.gz",
+    "sha256": "ac2c028697199479acb321db1e3d68caee9f2ba492ed73caa3cd13f3829bf913",
+    "why": "D2 声明式绘图（Go 静态程序，MPL-2.0）；Termux 官方仓库没有",
+    "extract": { "strip": 1, "include": ["bin/d2", "LICENSE.txt"] }
+  }
+}
+```
+
+| `extract` 里的字段 | 说明 |
+|---|---|
+| `format` | `tar.gz` / `tar.xz` / `tar.bz2` / `tar` / `zip`。不写就按 url 的后缀认，认不出就必须写 |
+| `strip` | 去掉开头几层目录（0–5）。上游包通常裹着一层 `d2-v0.9.0/`，写 `1` |
+| `include` | 只取这些路径（去层之后的相对路径；写目录就连带下面全部）。**尽量写**：上游包常带演示程序、头文件、文档，全打进来白占用户空间。写了却在包里找不到会构建失败 |
+| `exec` | 要补执行位的文件。zip 常常不带权限位，这时要写 |
+
+要求（打包时 devkit 会查，市场的 `check-recipes` 也会查）：
+
+- `sha256` 核对的是**下载下来的压缩包**。核对时以 GitHub 资产页显示的摘要为准：有的上游另附的 `.sha256` 文件对的其实是裸程序，不是压缩包（micromamba 就是这样）。
+- 解出来的路径不许越出落地目录：带 `..`、绝对路径的条目直接失败；软链只许相对、只许指向落地目录里面；硬链接改成实打实的文件；setuid / setgid 和组、其他人的写权限一律去掉；设备文件之类跳过。
+- 不收 `mode`（权限取包里的，补执行位用 `exec`）；`link` 条目照旧单独写。
+- 解出的文件和本组件 Termux 包里的文件同路径会失败；和底座同路径的，审计会拦。
+- **上游的 glibc 动态程序解进 `usr/glibc/opt/<组件>/`**。它们的解释器写死 `/lib/ld-linux-aarch64.so.1`，安卓上没有，审计只在这个目录下把它当提醒，放别处直接拦。包装脚本要 `unset LD_PRELOAD` 再经 `$PREFIX/glibc/lib/ld-linux-aarch64.so.1 --library-path …` 启动（照抄 `recipes/blender/lib/env.sh`），它要的 `libstdc++.so.6` 这类库靠 `roots` 带上 `gcc-libs-glibc` 等 glibc 包。
+- 静态链接（Go 程序、musl 静态）的不用进 `usr/glibc/`，放 `usr/lib/<组件>/` 就行。
+- AppImage 暂不支持（要先弄清楚怎么无头解开、怎么启动）。
+
 ## `npm`：只在 npm 上发布的 Node 程序
 
 上游只发 npm 包、Termux 官方仓库里没有时用（例：Cloudflare 的 wrangler）。配方目录里放
