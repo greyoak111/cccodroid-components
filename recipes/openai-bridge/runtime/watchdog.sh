@@ -21,18 +21,33 @@ trap 'exit 0' TERM INT HUP
 FAILURES=0
 FAILED_SINCE=$SECONDS
 LAST_START=$((-GRACE))
+HEALTHY_SINCE=-1
+ATTEMPTS=0
+if [[ -r "$STATE/recovery.attempts" ]]; then
+  ATTEMPTS=$(< "$STATE/recovery.attempts")
+  [[ "$ATTEMPTS" =~ ^[0-9]{1,3}$ ]] || ATTEMPTS=$RECOVERY_LIMIT
+fi
+[[ ! -e "$STATE/recovery.failed" ]] || exit 1
 exec 7> "$STATE/service.lock" || exit 1
 while :; do
+  [[ ! -e "$STATE/recovery.failed" ]] || exit 1
   if ! bridge_component_present; then
+    printf 'component removed or disabled\n' > "$STATE/recovery.failed"
     bridge_log watchdog "组件已卸载或安装标记无效；不再重启，请用私有副本 uninstall.sh 清理"
     exit 0
   fi
   if [[ ! -e "$STATE/restart.request" ]] && bridge_healthy; then
     FAILURES=0
     FAILED_SINCE=$SECONDS
+    (( HEALTHY_SINCE >= 0 )) || HEALTHY_SINCE=$SECONDS
+    if (( ATTEMPTS > 0 && SECONDS - HEALTHY_SINCE >= RECOVERY_STABLE )); then
+      ATTEMPTS=0
+      rm -f -- "$STATE/recovery.attempts"
+    fi
     sleep "$INTERVAL"
     continue
   fi
+  HEALTHY_SINCE=-1
 
   ((FAILURES++))
   PID=$(bridge_pid) || PID=
@@ -53,6 +68,17 @@ while :; do
     flock -u 7
     continue
   fi
+
+  if (( ATTEMPTS >= RECOVERY_LIMIT )); then
+    printf 'recovery limit reached\n' > "$STATE/recovery.failed"
+    bridge_log watchdog "自动恢复已停止：连续启动/修补尝试达到 $RECOVERY_LIMIT 次，需排查后显式重置"
+    flock -u 7
+    exit 1
+  fi
+  ((ATTEMPTS++))
+  printf '%s\n' "$ATTEMPTS" > "$STATE/recovery.attempts.tmp"
+  mv -f -- "$STATE/recovery.attempts.tmp" "$STATE/recovery.attempts" || exit 1
+  LAST_START=$SECONDS
 
   # 独立重拉时也必须先验证补丁，升级覆盖或补丁失败不能悄悄启动旧代码。
   timeout --kill-after=2 10 node "$BR/patch-ccr.js" >> "$STATE/start.log" 2>&1

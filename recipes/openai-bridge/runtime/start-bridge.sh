@@ -7,10 +7,40 @@ if [[ "${1:-}" == "--hook" ]]; then
   HOOK_MODE=1
   PORT=$(< "$BR/port") || exit 0
   [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 1024 && PORT <= 65535 )) || exit 0
-  # 匹配完整 authority 边界，不能把 3459 误认为 34590 或 userinfo。
-  case "${ANTHROPIC_BASE_URL:-}" in
+  # 匹配完整 authority 边界；App 自定义接口可能先经本机 streamfix 包装。
+  ENDPOINT=${ANTHROPIC_BASE_URL:-}
+  case "$ENDPOINT" in
     "http://127.0.0.1:$PORT"|"http://127.0.0.1:$PORT/"*) ;;
-    *) exit 0 ;;
+    *)
+      (( ${#ENDPOINT} <= 8192 )) || exit 0
+      WRAPPER_RE='^http://127\.0\.0\.1:([0-9]{1,5})/u/([0-9a-f]{32}/)?([A-Za-z0-9_-]+)/?$'
+      [[ "$ENDPOINT" =~ $WRAPPER_RE ]] || exit 0
+      WRAPPER_PORT=${BASH_REMATCH[1]}
+      TOKEN=${BASH_REMATCH[3]}
+      (( 10#$WRAPPER_PORT >= 1 && 10#$WRAPPER_PORT <= 65535 )) || exit 0
+      command -v base64 >/dev/null 2>&1 || exit 0
+      ENCODED=${TOKEN//-/+}
+      ENCODED=${ENCODED//_/\/}
+      case $(( ${#ENCODED} % 4 )) in
+        0) ;;
+        2) ENCODED+='==' ;;
+        3) ENCODED+='=' ;;
+        *) exit 0 ;;
+      esac
+      # 保留尾部换行；回编码同时排除 NUL 丢失和非规范 base64，不能误启其他目标。
+      { ENDPOINT=$( { printf '%s' "$ENCODED" | base64 -d || exit 1; printf '.'; } ); } 2>/dev/null || exit 0
+      ENDPOINT=${ENDPOINT%.}
+      ENCODED=$(printf '%s' "$ENDPOINT" | base64) || exit 0
+      ENCODED=${ENCODED//$'\n'/}
+      ENCODED=${ENCODED//+/-}
+      ENCODED=${ENCODED//\//_}
+      ENCODED=${ENCODED%%=*}
+      [[ "$ENCODED" = "$TOKEN" ]] || exit 0
+      case "$ENDPOINT" in
+        "http://127.0.0.1:$PORT"|"http://127.0.0.1:$PORT/"*) ;;
+        *) exit 0 ;;
+      esac
+      ;;
   esac
 elif (( $# )); then
   printf '[start-bridge] 未知启动参数\n' >&2
@@ -20,6 +50,7 @@ source "$BR/bridge-common.sh" || exit 1
 unset CCAPP_RUN CLAUDECODE CLAUDE_CODE_ENTRYPOINT
 mkdir -p "$STATE" || exit 1
 LOG="$STATE/start.log"
+STARTED=$SECONDS
 
 fail() {
   printf '[start-bridge] %s\n' "$*" | tee -a "$LOG" >&2
@@ -35,6 +66,10 @@ if ! bridge_component_present; then
   fail "组件入口不存在或安装标记无效，未启动服务"
 fi
 [[ -r "$CLI" && -r "$BR/watchdog.sh" ]] || fail "桥文件不完整：$BR"
+if [[ -e "$STATE/recovery.failed" ]]; then
+  (( HOOK_MODE )) && exit 0
+  fail "自动恢复达到上限，排查后需显式 start --reset-recovery --yes"
+fi
 
 # 看护自己持有单例锁并在启动 CCR 前校验补丁；Hook 不等锁、补丁或 HTTP 就绪。
 if (( HOOK_MODE )); then
@@ -63,15 +98,17 @@ PATCHED=$?
 case "$PATCHED" in
   0) ;;
   2) touch "$STATE/restart.request" || fail "无法记录补丁重启请求" ;;
-  *) fail "补丁检查失败（退出码 $PATCHED），详情：$LOG" ;;
+  *) printf 'patch verification failed\n' > "$STATE/recovery.failed"; fail "补丁检查失败（退出码 $PATCHED），自动恢复已停止，详情：$LOG" ;;
 esac
 flock -u 7
 exec 7>&-
 flock -u 9
 exec 9>&-
 
-DEADLINE=$((SECONDS + START_TIMEOUT))
+DEADLINE=$((STARTED + START_TIMEOUT))
 while (( SECONDS < DEADLINE )); do
+  [[ ! -e "$STATE/recovery.failed" ]] || fail "自动恢复达到上限，请检查运行状态并显式重置"
+  bridge_component_present || fail "等待就绪期间组件已卸载或停用"
   if watchdog_running; then
     if [[ ! -e "$STATE/restart.request" ]] && bridge_healthy; then
       exit 0

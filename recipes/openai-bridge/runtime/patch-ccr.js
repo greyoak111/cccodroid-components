@@ -421,8 +421,8 @@ const secureModules = {
   "find-my-way": ["9.10.0", 11, "ee4536c482240ab717a64d30fb870a234956aab64eea71d1c79683a41efa4c1b"],
   undici: ["7.30.1", 103, "30b189bb9f70604d5b06c2df0732b63ed43518f46496c3b0daccb761c104f079"],
   "@isaacs/brace-expansion": ["5.0.1", 1, "f4fad01984b7b902b68790c287c7b2a4d5e8270c86b203b56bc61fb3e891c537"],
-  minimatch: ["10.2.6", 6, "b6911de12dc7e3b1a58b6f12afd40b7dc3994c7f4bf71937e4f76bdaab5d371d"],
-  glob: ["11.1.0", 7, "fd5227611c0d6aa5a6cc1b48abfb63f4407cc21b311fb75bff10523db30e0d07"],
+  minimatch: ["11.0.3", 6, "b6911de12dc7e3b1a58b6f12afd40b7dc3994c7f4bf71937e4f76bdaab5d371d"],
+  glob: ["14.0.3", 7, "fd5227611c0d6aa5a6cc1b48abfb63f4407cc21b311fb75bff10523db30e0d07"],
   "shell-quote": ["1.12.0", 3, "363b4d666eaea08096b343aaeb5c7c3d6ca6ad7e75f78573eb776cf64f93c10a"]
 };
 for (const [name, [version, count, digest]] of Object.entries(secureModules)) {
@@ -447,12 +447,21 @@ for (const [name, [version, count, digest]] of Object.entries(secureModules)) {
   for (const block of blocks) {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "node_modules", name, "package.json"), "utf8"));
     let relative = block.subpath.slice(name.length + 1);
+    // minimatch 11 不再提供这两个内部模块；旧指纹块外若仍有引用则拒绝删除。
+    if (name === "minimatch" && ["dist/commonjs/ast.js", "dist/commonjs/brace-expressions.js"].includes(relative)) {
+      let retained = src;
+      for (const old of blocks) retained = retained.replace(old.text, "");
+      if (new RegExp("\\b" + block.factory + "\\b").test(retained)) missing.push("retained reference " + block.factory);
+      else src = src.replace(block.text, mark + "\n");
+      continue;
+    }
     if (name === "fastify") relative = relative.replace(/[A-Z]/g, letter => "-" + letter.toLowerCase());
     if (!fs.existsSync(path.join(__dirname, "node_modules", name, relative))) {
       missing.push("replacement subpath " + name + "/" + relative);
       continue;
     }
-    const specifier = relative === (pkg.main || "index.js").replace(/^\.\//, "") ? JSON.stringify(name) :
+    const publicEntry = relative === (pkg.main || "index.js").replace(/^\.\//, "") || name === "glob" && relative === "dist/commonjs/index.js";
+    const specifier = publicEntry ? JSON.stringify(name) :
       'require("node:path").join(require.resolve(' + JSON.stringify(name + "/package.json") + '), "..", ' + JSON.stringify(relative) + ')';
     src = src.replace(block.text, mark + "\nvar " + block.factory + " = () => require(" + specifier + ");");
   }

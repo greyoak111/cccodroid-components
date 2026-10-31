@@ -14,6 +14,9 @@ INTERVAL=${CCR_BRIDGE_INTERVAL:-5}
 GRACE=${CCR_BRIDGE_GRACE:-15}
 FAIL_LIMIT=${CCR_BRIDGE_FAIL_LIMIT:-3}
 START_TIMEOUT=${CCR_BRIDGE_START_TIMEOUT:-65}
+RECOVERY_LIMIT=${CCR_BRIDGE_RECOVERY_LIMIT:-3}
+RECOVERY_STABLE=${CCR_BRIDGE_RECOVERY_STABLE:-300}
+[[ "$RECOVERY_LIMIT" =~ ^[1-9][0-9]?$ && "$RECOVERY_STABLE" =~ ^[1-9][0-9]*$ ]] || return 1
 
 bridge_log() {
   printf '[%s] %s %s\n' "$1" "$(date '+%F %T')" "$2" >> "$STATE/bridge.out"
@@ -21,6 +24,7 @@ bridge_log() {
 
 # 只读本安装的元数据，不读取连接文件、上游配置或任何密钥。
 bridge_component_present() {
+  [[ ! -e "$BR/disabled" ]] || return 1
   node -e 'try { const fs=require("node:fs"), path=require("node:path"); const root=process.argv[1], m=JSON.parse(fs.readFileSync(path.join(root,".ccr-bridge-kit.json"),"utf8")); if(m.id!=="ccr-bridge-kit"||m.target!==root||typeof m.componentEntry!=="string"||!path.isAbsolute(m.componentEntry)||!fs.statSync(m.componentEntry).isFile()) process.exit(1); } catch { process.exit(1); }' "$BR" 2>/dev/null
 }
 

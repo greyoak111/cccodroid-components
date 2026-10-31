@@ -2,12 +2,12 @@
   "schema": 1,
   "id": "openai-bridge",
   "kind": "termux",
-  "revision": 5,
-  "version": "1.0.4",
+  "revision": 9,
+  "version": "1.0.5",
   "name": { "zh": "OpenAI API 本地协议桥（预览）", "en": "Local OpenAI API bridge (preview)" },
   "desc": {
-    "zh": "将用户自有的 OpenAI Chat Completions API 转为本机 Anthropic Messages 接口，请求会转发到用户配置的远端。带 CCR 1.0.73 兼容及依赖安全补丁、受范围限制的 SessionStart 看护；不提供模型或额度。预览组件，包体约 107 MiB。",
-    "en": "Adapt a user's own OpenAI Chat Completions API to a local Anthropic Messages endpoint; requests go to the user's configured remote service. Includes CCR 1.0.73 compatibility and dependency-security patches with a scoped SessionStart watchdog. No model or quota is provided. Preview component, about 107 MiB."
+    "zh": "将用户自有的 OpenAI Chat Completions API 转为本机 Anthropic Messages 接口，请求发往用户配置的远端。含 CCR 1.0.73 兼容/依赖修复、有限恢复及受限启动契约；新版 App 自动就绪需配套支持。未完成交付验收的预览组件，不提供模型或额度，约 105 MiB。",
+    "en": "Adapt an authorized Chat Completions API to local Anthropic Messages; requests go to the user's remote service. Includes CCR 1.0.73 fixes, bounded recovery and a scoped startup contract. Automatic readiness needs a paired App update. Preview, delivery acceptance incomplete; no model or quota, about 105 MiB."
   },
   "roots": ["nodejs", "bash", "util-linux", "coreutils"],
   "bin": ["openai-bridge"],
@@ -25,6 +25,7 @@
     "usr/bin/openai-bridge": { "src": "openai-bridge", "mode": "755" },
     "usr/lib/openai-bridge/component.cjs": { "src": "component.cjs" },
     "usr/lib/openai-bridge/installer.cjs": { "src": "installer.cjs" },
+    "usr/lib/openai-bridge/gui-models.cjs": { "src": "gui-models.cjs" },
     "usr/lib/openai-bridge/package.json": { "src": "package.json" },
     "usr/lib/openai-bridge/package-lock.json": { "src": "package-lock.json" },
     "usr/lib/openai-bridge/LICENSE": { "src": "LICENSE" },
@@ -36,7 +37,8 @@
     "usr/lib/openai-bridge/runtime/start-bridge.sh": { "src": "runtime/start-bridge.sh", "mode": "755" },
     "usr/lib/openai-bridge/runtime/watchdog.sh": { "src": "runtime/watchdog.sh", "mode": "755" },
     "usr/lib/openai-bridge/runtime/selftest.cjs": { "src": "runtime/selftest.cjs" },
-    "usr/lib/openai-bridge/runtime/health.cjs": { "src": "runtime/health.cjs" }
+    "usr/lib/openai-bridge/runtime/health.cjs": { "src": "runtime/health.cjs" },
+    "usr/lib/openai-bridge/runtime/service-registration.cjs": { "src": "runtime/service-registration.cjs" }
   },
-  "notes": "源文件在 chenshi723/cccodroid-openai-bridge 修改后由 recipe/sync.sh 同步。仅修补专用私有运行副本，不改 Claude Code、底座或组件所有文件、不读订阅凭据。Hook 严格匹配端点后投递看护；包入口删除后不再自启/重启，不强杀现有请求。上游已确认合并后 CI 打包签名，再补 App 实聊、完整卸载及 verified.json；不提供预发布签名索引。安全依赖仍按锁文件和原子指纹补丁验证。"
+  "notes": "配套App支持桥卡片内三字段图形配置；先由用户同意，地址和Key填好后可自动读取同源模型清单，失败仍可手填。清单只GET /models，不推理/不切会话/不跟重定向；固定组件以stdin接Key，不回显。保存只做本地配置/就绪；用户主动新建才用。需要支持v1本地服务注册/ensure契约的配套App：先发布兼容App，再发布组件并经用户确认配置或迁移；配置只注册非密钥端点/实例，App包装URL前等待桥就绪，旧App不透明通道不能靠Hook恢复。看护有持久三次恢复预算；固定卸载入口核对端点/实例后写停用标记并移除自身注册/Hook，默认保留数据。配套App对坏注册或未知schema不执行脚本，卸载清固定残留注册而不被其卡住。仅改专用私有副本，不改Claude Code或签名根。最终签名配套包的原生八项验收未全部完成，不伪造verified.json。源修改后由recipe/sync.sh同步，依赖安全仍按锁文件和指纹补丁验证。"
 }
