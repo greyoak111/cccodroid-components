@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "openai-bridge",
   "kind": "termux",
-  "revision": 9,
+  "revision": 10,
   "version": "1.0.5",
   "name": { "zh": "OpenAI API 本地协议桥（预览）", "en": "Local OpenAI API bridge (preview)" },
   "desc": {

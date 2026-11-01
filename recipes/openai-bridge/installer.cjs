@@ -700,6 +700,8 @@ function stopManaged(target,context=null) {
     fs.accessSync(real,fs.constants.X_OK);
     return {real,stat};
   };
+  // 系统 linker：标准 AOSP 上 /apex/com.android.runtime 是链接，realpath 带 @版本号；apex 换版时可能带 " (deleted)"
+  const isSystemLinker=(p)=>/^\/(?:system|apex\/com\.android\.runtime(?:@[^/]*)?)\/bin\/linker64(?: \(deleted\))?$/.test(p);
   const nodeExecutable=executable(process.execPath);let bashExecutable;
   const trustedBash=()=>{
     if(bashExecutable)return bashExecutable;
@@ -716,6 +718,10 @@ function stopManaged(target,context=null) {
       if(end<0||!/^\d+$/.test(fields[19]||''))throw new Error('进程身份信息不合法。');
       if(fields[0]==='Z'||fields[0]==='X')return null;
       const args=procFile(pid,'cmdline',65536).split('\0');if(args.at(-1)==='')args.pop();
+      // 安卓经加载器执行（termux-exec linker 模式，真机实测）：/proc/PID/exe 是系统 linker，
+      // cmdline 是「原 argv0、真实程序绝对路径、原参数…」。丢掉原 argv0，用插进来的真实路径比对（#66 第 2 项）
+      let exeReal='';try{exeReal=fs.realpathSync('/proc/'+pid+'/exe');}catch(error){if(!['ENOENT','ESRCH','EACCES'].includes(error.code))throw error;}
+      const viaLinker=isSystemLinker(exeReal)&&args.length>=2;if(viaLinker)args.shift();
       let matches;
       if(kind==='watchdog')matches=args.length===2&&path.basename(args[0])==='bash'&&args[1]===path.join(target,'watchdog.sh');
       else{
@@ -725,7 +731,11 @@ function stopManaged(target,context=null) {
       if(!matches)return null;
       // argv[0] 可任意伪装；真实 /proc/PID/exe 必须属于固定解析的解释器。
       const expected=kind==='watchdog'?trustedBash():nodeExecutable,exe='/proc/'+pid+'/exe';
-      if(fs.realpathSync(exe)!==expected.real||!sameFile(fs.statSync(exe),expected.stat)||!sameFile(fs.statSync(expected.real),expected.stat))return null;
+      if(viaLinker){
+        // exe 必须真是系统 linker，被它加载的程序（argv 里的绝对路径）必须就是那个可信解释器
+        if(!path.isAbsolute(args[0])||fs.realpathSync(args[0])!==expected.real||
+          !sameFile(fs.statSync(args[0]),expected.stat)||!sameFile(fs.statSync(expected.real),expected.stat))return null;
+      }else if(fs.realpathSync(exe)!==expected.real||!sameFile(fs.statSync(exe),expected.stat)||!sameFile(fs.statSync(expected.real),expected.stat))return null;
       return {pid,stamp:fields[19]};
     }catch(error){if(['ENOENT','ESRCH'].includes(error.code))return null;throw error;}
   };

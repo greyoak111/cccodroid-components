@@ -28,6 +28,18 @@ bridge_component_present() {
   node -e 'try { const fs=require("node:fs"), path=require("node:path"); const root=process.argv[1], m=JSON.parse(fs.readFileSync(path.join(root,".ccr-bridge-kit.json"),"utf8")); if(m.id!=="ccr-bridge-kit"||m.target!==root||typeof m.componentEntry!=="string"||!path.isAbsolute(m.componentEntry)||!fs.statSync(m.componentEntry).isFile()) process.exit(1); } catch { process.exit(1); }' "$BR" 2>/dev/null
 }
 
+# 安卓经加载器执行时（termux-exec 的 linker 模式），/proc/PID/exe 是系统 linker，
+# cmdline 是「原 argv0、真实程序绝对路径、原参数…」（真机实测）。exe 确是系统 linker 时
+# 丢掉原 argv0，用 termux-exec 插进来的真实路径当程序，再照原规则比对（#66 第 2 项）
+strip_linker() {
+  local exe
+  exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || return 0
+  exe=${exe% (deleted)}   # apex 换版时旧 linker 已删
+  # 标准 AOSP 上 /apex/com.android.runtime 是链接，exe 读出来带 @版本号
+  [[ $exe = /system/bin/linker64 || $exe =~ ^/apex/com\.android\.runtime(@[^/]*)?/bin/linker64$ ]] && (( ${#args[@]} >= 2 )) && args=("${args[@]:1}")
+  return 0
+}
+
 # 不凭 PID 文件就杀进程：同时校验 Node、完整脚本路径（或原看护的相对路径 + cwd）。
 bridge_process() {
   local pid=$1
@@ -35,6 +47,7 @@ bridge_process() {
   [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 1 )) || return 1
   kill -0 "$pid" 2>/dev/null || return 1
   { mapfile -d '' -t args < "/proc/$pid/cmdline"; } 2>/dev/null || return 1
+  strip_linker
   [[ ${#args[@]} -ge 3 && ${args[0]##*/} = node && ${args[2]} = start ]] || return 1
   [[ ${args[1]} = "$CLI" ]] && return 0
   [[ ${args[1]} = node_modules/@musistudio/claude-code-router/dist/cli.js ]] &&
@@ -62,6 +75,7 @@ watchdog_running() {
   [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 1 )) || return 1
   kill -0 "$pid" 2>/dev/null || return 1
   { mapfile -d '' -t args < "/proc/$pid/cmdline"; } 2>/dev/null || return 1
+  strip_linker
   [[ ${#args[@]} -ge 2 && ${args[0]##*/} = bash && ${args[1]} = "$BR/watchdog.sh" ]] || return 1
   # PID 仍在但锁已释放，也不能算一个有效的看护。
   ! flock -n "$STATE/watchdog.lock" true

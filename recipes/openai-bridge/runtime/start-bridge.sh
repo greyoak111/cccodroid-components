@@ -84,6 +84,9 @@ if ! watchdog_running; then
   for PROC in /proc/[0-9]*/cmdline; do
     ARGS=()
     { mapfile -d '' -t ARGS < "$PROC"; } 2>/dev/null || continue
+    EXE=$(readlink "${PROC%/cmdline}/exe" 2>/dev/null) || EXE=
+    EXE=${EXE% (deleted)}
+    [[ ( $EXE = /system/bin/linker64 || $EXE =~ ^/apex/com\.android\.runtime(@[^/]*)?/bin/linker64$ ) && ${#ARGS[@]} -ge 2 ]] && ARGS=("${ARGS[@]:1}")
     if [[ ${#ARGS[@]} -ge 2 && ${ARGS[0]##*/} = bash && ${ARGS[1]} = "$BR/watchdog.sh" ]]; then
       sleep 0.2
       watchdog_running || fail "发现尚未迁移的看护（${PROC%/cmdline}），需先确认并替换旧看护"
