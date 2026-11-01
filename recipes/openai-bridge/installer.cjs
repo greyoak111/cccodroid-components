@@ -660,7 +660,10 @@ function guiRetired(paths){
   const {home,target,settings}=paths;
   if(!exists(target)||!exists(path.join(target,MARKER))||!exists(path.join(target,'disabled')))return false;
   instanceDirectory(target);
-  let m;try{m=loadManifest(target);}catch{return false;}
+  // 不用 loadManifest：它要求版本号与当前组件一致，组件升了版本（比如 1.0.6）后旧版卸载留下的目录就认不出了，又回到配不上。
+  // 只在这里放宽到同系列的任意版本号，其余身份字段照旧严格；认出来也只是改名让位，不读不执行
+  let m;try{m=JSON.parse(instanceFile(path.join(target,MARKER),65536).data);}catch{return false;}
+  if(!object(m)||m.id!=='ccr-bridge-kit'||typeof m.version!=='string'||!/^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$/.test(m.version)||m.target!==target)return false;
   if(m.guiManaged!==true||m.settings!==settings||m.componentEntry!==path.join(SOURCE,'component.cjs'))return false;
   if(instanceFile(path.join(target,'disabled'),32).data.toString('utf8')!==RETIRED)return false;
   return registration.read(home)===null;
