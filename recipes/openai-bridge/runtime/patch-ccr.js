@@ -367,6 +367,31 @@ const IMAGE_TOKENS_NEW = `          } else if (contentPart.type === "image") {
             } else tokenCount += enc.encode(typeof contentPart.content === "string" ? contentPart.content : JSON.stringify(contentPart.content)).length;
           }`;
 
+// 11) 有的上游不认 reasoning_effort / reasoning（见 1），只回一句笼统的 400 Invalid request payload，
+//     Claude Code 认不出这是「不支持 effort」，不会自己降级重试，整轮失败（cccodroid #84）。
+//     带了这两个字段、拿到的 400 又像「请求参数不对」时，去掉它们重发一次；成功就记住这个地址+模型（进程内，桥重启即清），之后直接不带。
+//     重发也失败、或重发本身断网/超时，都把第一次的错误原样交回去，不掩盖真正的原因。
+//     误判面：400 正文像参数错误、但真实原因是别的，而去掉推理参数后又恰好成功——这时该模型在本进程内不再带推理强度。
+const REASON_OLD = `, fetch(typeof r == "string" ? r : r.toString(), c);
+}`;
+const REASON_NEW = `, (() => {
+    // ccr-reasoning-fallback-v1
+    let url = typeof r == "string" ? r : r.toString(), key = url + "\\n" + (e && e.model), no = globalThis.__ccrNoReasoning || (globalThis.__ccrNoReasoning = new Set());
+    if (!e || (e.reasoning === undefined && e.reasoning_effort === undefined)) return fetch(url, c);
+    let strip = () => { let b = { ...e }; delete b.reasoning; delete b.reasoning_effort; return { ...c, body: JSON.stringify(b) }; };
+    if (no.has(key)) return fetch(url, strip());
+    return fetch(url, c).then((res) => res.status !== 400 ? res : res.text().then((txt) => {
+      let first = () => new Response(txt, { status: res.status, statusText: res.statusText, headers: res.headers });
+      if (!/invalid_request|invalid|unrecogni[sz]ed|unknown|unsupported|not (?:permitted|allowed|supported)|extra|reasoning|payload|parameter/i.test(txt)) return first();
+      return fetch(url, strip()).then((r2) => {
+        if (r2.ok) { no.add(key); try { n?.warn?.({ reqId: o?.req?.id, model: e.model }, "upstream rejected reasoning params; resent without them"); } catch {} return r2; }
+        try { r2.body?.cancel(); } catch {}
+        return first();
+      }, first);
+    }));
+  })();
+}`;
+
 let src = fs.readFileSync(file, "utf8");
 let changed = false, missing = [];
 
@@ -385,6 +410,9 @@ patch("upstream cancel", '(e._ccrReader || e).cancel(o)', CANCEL_OLD, CANCEL_NEW
 patch("error handler", 't.raw.headersSent || t.raw.writableEnded', H_OLD, H_NEW);
 patch("request body log", 'n.log.debug({ data: n.body, type: "request body" })', BODY_OLD, BODY_NEW);
 patch("fresh connection", 'keepAliveMaxTimeout: 1', AGENT_OLD, AGENT_NEW);
+// 锚点只有两行：CCR 升级后若别处也出现同样片段，replace 会打错位置，宁可报缺也不乱打
+if (!src.includes("// ccr-reasoning-fallback-v1") && src.split(REASON_OLD).length > 2) missing.push("reasoning fallback (anchor not unique)");
+else patch("reasoning fallback", "// ccr-reasoning-fallback-v1", REASON_OLD, REASON_NEW);
 patch("explicit stream", 'stream: e.stream === true, tools:', STREAM_OLD, STREAM_NEW);
 patch("JSON/SSE response", SSE_MARK, src.includes(SSE_FALLBACK) ? SSE_FALLBACK : SSE_OLD, SSE_NEW);
 patch("tool result images", "// ccr-tool-images-v1:", TOOL_IMAGES_OLD, TOOL_IMAGES_NEW);
@@ -493,7 +521,7 @@ if (changed) {
     if (fs.existsSync(temp)) fs.unlinkSync(temp);
   }
   if (process.exitCode) process.exit(process.exitCode);
-  console.log("[patch-ccr] patched: " + ["effort", "uncaughtException", "unhandledRejection", "stream reader", "upstream cancel", "error handler", "request body log", "fresh connection", "explicit stream", "JSON/SSE response", "tool result images", "image token estimate", "bundled static security"].join(", "));
+  console.log("[patch-ccr] patched: " + ["effort", "uncaughtException", "unhandledRejection", "stream reader", "upstream cancel", "error handler", "request body log", "fresh connection", "reasoning fallback", "explicit stream", "JSON/SSE response", "tool result images", "image token estimate", "bundled static security"].join(", "));
   process.exit(2);   // 刚打上：正在跑的实例还是旧代码，调用方应重启
 }
 console.log("[patch-ccr] already patched");

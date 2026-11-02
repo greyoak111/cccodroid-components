@@ -38,6 +38,24 @@ async function main() {
         seen.push(request);
         const usage = { prompt_tokens: 11, completion_tokens: 2 };
         const base = { id: "local-selftest", model: request.model };
+        if (request.model === "broken") {
+          // 恒 400：重发也失败时要交回第一次的错误正文
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { message: "Invalid request payload #" + seen.filter((x) => x.model === "broken").length, type: "invalid_request_error" } }));
+          return;
+        }
+        if (request.model === "quota") {
+          // 不像参数错误的 400：不重发
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { message: "daily quota exhausted", type: "rate_limit" } }));
+          return;
+        }
+        if (request.model === "strict" && (request.reasoning !== undefined || request.reasoning_effort !== undefined)) {
+          // 学某些上游：不认推理参数，只回一句笼统的 400（#84）
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { code: null, message: "Invalid request payload", param: null, type: "invalid_request_error" } }));
+          return;
+        }
         if (request.model === "sse") {
           // 故意误标响应类型，覆盖实际服务端常见兼容问题。
           const frames = [
@@ -63,7 +81,7 @@ async function main() {
     fs.mkdirSync(state, { recursive: true });
     fs.writeFileSync(path.join(state, "config.json"), JSON.stringify({
       HOST: "127.0.0.1", PORT: port, APIKEY: "local-test-only", LOG: false, NON_INTERACTIVE_MODE: true,
-      Providers: [{ name: "mock", api_base_url: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, api_key: "local-test-only", models: ["json", "sse"] }],
+      Providers: [{ name: "mock", api_base_url: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`, api_key: "local-test-only", models: ["json", "sse", "strict", "broken", "quota"] }],
       Router: { default: "mock,json" }
     }), { mode: 0o600 });
     const env = { ...process.env, HOME: home, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
@@ -99,6 +117,33 @@ async function main() {
       console.log(`PASS ${model} stream=${stream}; text + effort preserved`);
     }
     assert.equal(seen.length, 3);
+    // 上游不认推理参数：第一次 400 后去掉重发并记住，第二次直接不带（#84）
+    for (const round of [1, 2]) {
+      const before = seen.length;
+      const response = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+        method: "POST", signal: AbortSignal.timeout(5000), headers: { "content-type": "application/json", "x-api-key": "local-test-only" },
+        body: JSON.stringify({ model: "mock,strict", max_tokens: 16, stream: true, output_config: { effort: "high" }, messages: [{ role: "user", content: "local selftest" }] })
+      });
+      const text = await response.text();
+      assert.equal(response.status, 200, text);
+      assert.match(text, /LOCAL_OK/);
+      assert.equal(seen.at(-1).reasoning_effort, undefined);
+      assert.equal(seen.at(-1).reasoning, undefined);
+      assert.equal(seen.length - before, round === 1 ? 2 : 1);
+    }
+    for (const [model, sent, pattern] of [["broken", 2, /Invalid request payload #1/], ["quota", 1, /daily quota exhausted/]]) {
+      const before = seen.length;
+      const response = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+        method: "POST", signal: AbortSignal.timeout(5000), headers: { "content-type": "application/json", "x-api-key": "local-test-only" },
+        body: JSON.stringify({ model: "mock," + model, max_tokens: 16, stream: false, output_config: { effort: "high" }, messages: [{ role: "user", content: "local selftest" }] })
+      });
+      const text = await response.text();
+      assert.equal(response.status, 400, text);
+      assert.match(text, pattern);
+      assert.equal(seen.length - before, sent);
+    }
+    passed++;
+    console.log("PASS strict upstream; reasoning params dropped after 400, remembered; real errors kept");
   } finally {
     if (child && child.exitCode === null) {
       child.kill("SIGTERM");
@@ -114,7 +159,7 @@ async function main() {
     }
     fs.rmSync(temp, { recursive: true, force: true });
   }
-  console.log(`===== 总结 ===== CCR=1.0.73 static=10.1.2 JSON/SSE=${passed}/3 effort=OK upstream=loopback-only`);
+  console.log(`===== 总结 ===== CCR=1.0.73 static=10.1.2 JSON/SSE=${passed}/4 effort=OK upstream=loopback-only`);
 }
 
 main().catch((error) => { console.error("selftest failed:", error.message); process.exitCode = 1; });
