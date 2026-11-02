@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "openai-bridge",
   "kind": "termux",
-  "revision": 16,
+  "revision": 17,
   "version": "1.0.5",
   "name": { "zh": "OpenAI API 本地协议桥（预览）", "en": "Local OpenAI API bridge (preview)" },
   "desc": {
@@ -40,5 +40,5 @@
     "usr/lib/openai-bridge/runtime/health.cjs": { "src": "runtime/health.cjs" },
     "usr/lib/openai-bridge/runtime/service-registration.cjs": { "src": "runtime/service-registration.cjs" }
   },
-  "notes": "r16从上游源码同步，含r15审查后的配置崩溃续配和看护并发修正，保留正式r14的Android执行层、受管升级/卸载和推理参数回退。配套App可保存至多100个模型及逐模型窗口：有效元数据优先，缺失200000，保留手动值。清单先由用户同意，只GET同源/models，不推理/不切会话/不跟重定向；固定组件以stdin接Key，不回显。组件只接模型ID，窗口由App管理。恢复故障固定码优先于残存health；状态/保存/Hook/普通ensure不清恢复锁，不实现GUI重置。只有精确configuring临时事务残留可在用户明确保存、身份核对和完整提交后清除，其他停用标记/恢复次数不清。探活仅时间/固定码，有绝对截止和有界日志，不记正文/头/对话；入口缺失有界重确认不替代恢复预算。可信HOME根统一真实路径，实例以下链接/身份/完整性检查不放宽。需要配套App和v1注册/ensure；先发布兼容App，再发布组件并经用户确认配置或迁移。仅改专用私有副本，不改Claude Code、签名根或其他服务。源码隔离测试不等于真机界面/签名安装验收，不伪造verified.json。首次午夜探活失败诱因仍未知，恢复运行不等于全部根因修复。修改上游后由recipe/sync.sh同步，依赖仍按锁文件和指纹验证。"
+  "notes": "r17从上游源码同步，在r16基础上补Gemini 3工具调用thought signature回传（cccodroid #91）：按调用id在进程内有界记忆，只回给同一上游模型；Gemini缺签名时按Google文档填占位值，非Gemini请求不加字段。含r15审查后的配置崩溃续配和看护并发修正，保留正式r14的Android执行层、受管升级/卸载和推理参数回退。配套App可保存至多100个模型及逐模型窗口：有效元数据优先，缺失200000，保留手动值。清单先由用户同意，只GET同源/models，不推理/不切会话/不跟重定向；固定组件以stdin接Key，不回显。组件只接模型ID，窗口由App管理。恢复故障固定码优先于残存health；状态/保存/Hook/普通ensure不清恢复锁，不实现GUI重置。只有精确configuring临时事务残留可在用户明确保存、身份核对和完整提交后清除，其他停用标记/恢复次数不清。探活仅时间/固定码，有绝对截止和有界日志，不记正文/头/对话；入口缺失有界重确认不替代恢复预算。可信HOME根统一真实路径，实例以下链接/身份/完整性检查不放宽。需要配套App和v1注册/ensure；先发布兼容App，再发布组件并经用户确认配置或迁移。仅改专用私有副本，不改Claude Code、签名根或其他服务。源码隔离测试不等于真机界面/签名安装验收，不伪造verified.json。首次午夜探活失败诱因仍未知，恢复运行不等于全部根因修复。修改上游后由recipe/sync.sh同步，依赖仍按锁文件和指纹验证。"
 }
