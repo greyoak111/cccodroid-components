@@ -118,6 +118,15 @@
         "checks": "installed from signed index; placed 8683, shared 0; skill gpu-driver-glibc installed; selftest exit 0: ===== 总结 ===== Turnip=OK zink-Mesa=未就位; removed cleanly; devkit base unchanged",
         "by": "greyoak111"
       }
+    },
+    "24.2.6-r3": {
+      "3768afcf79a7": {
+        "date": "2026-11-04",
+        "device": "LENOVO TB320FC / Android 15",
+        "app": "cccodroid 0.6.4",
+        "checks": "installed from signed index; placed 8683, shared 0; skill gpu-driver-glibc installed; selftest exit 0: ===== 总结 ===== Turnip=OK zink-Mesa=未就位; removed cleanly; devkit base unchanged",
+        "by": "greyoak111"
+      }
     }
   },
   "clvk-glibc": {
@@ -225,6 +234,15 @@
         "checks": "维护者决定沿用：devkit-2026.10.28 只加了 Go / Node.js 两个可选模块（整包不放）、升了 16 个底座包，没动可选组件，沿用 devkit-2026.10.22.3 上的真机验证。原记录：installed from signed index; placed 14, shared 0; skill gpu-driver installed; selftest exit 0: ===== 总结 ===== Turnip=OK zink=OK render=PASS opencl=PASS; removed cleanly; devkit base unchanged",
         "by": "greyoak111",
         "carriedFromBase": "ae9d10a14013"
+      }
+    },
+    "26.2.6-r3": {
+      "3768afcf79a7": {
+        "date": "2026-11-04",
+        "device": "LENOVO TB320FC / Android 15",
+        "app": "cccodroid 0.6.4",
+        "checks": "installed from signed index; placed 14, shared 0; skill gpu-driver installed; selftest exit 0: ===== 总结 ===== Turnip=OK zink=OK render=PASS opencl=PASS; removed cleanly; devkit base unchanged",
+        "by": "greyoak111"
       }
     }
   },
