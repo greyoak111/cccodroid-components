@@ -101,6 +101,19 @@ async function install(id) {
   return { ok: !!c && ["ok", "update"].includes(c.state), message: c ? c.error || c.state : "不见了", secs: ((Date.now() - t0) / 1000) | 0 };
 }
 const remove = (id) => api("/api/components/remove", { id });
+// 工具包模块（requires 里的 module:<id>）：走模块接口装，不是组件。装上就留着 —— 模块是工具包的一部分，别的组件、pkg 也可能用它
+async function installModule(id) {
+  const r = await api("/api/devkit/modules/install", { id });
+  if (!r.ok) return { ok: false, message: r.message };
+  if (r.already) return { ok: true };
+  let m;
+  for (let i = 0; i < 1800; i++) {
+    await sleep(2000);
+    m = ((await api("/api/devkit/modules")).items || []).find((x) => x.id === id);
+    if (!m || !m.progress) break;
+  }
+  return { ok: !!m && m.state === "ok", message: m ? m.error || m.state : "不见了" };
+}
 
 // 工具包本体：.devkit-manifest 每行「类型 大小 相对路径」。用户会改的配置、包管理器状态、pip/npm 装的东西不算
 const userTouchable = (r) => /^(etc|glibc\/etc|var|tmp)\//.test(r) || /^lib\/python3\.\d+\/site-packages\//.test(r) || r.startsWith("lib/node_modules/");
@@ -149,6 +162,13 @@ if (wasInstalled) {
 const depsAdded = [];
 for (const d of c0.requires || []) {
   if (d.ok) continue;
+  if (d.id.startsWith("module:")) {
+    const mid = d.id.slice(7);
+    log(`\n· 先装工具包模块 ${mid}（装上就留着，不随验证卸掉）`);
+    const r = await installModule(mid);
+    if (!ok(r.ok, `工具包模块 ${mid} 装好${r.ok ? "" : "：" + r.message}`)) return fail(`工具包模块 ${mid} 装不上`);
+    continue;
+  }
   log(`\n· 先装依赖 ${d.id}`);
   const r = await install(d.id);
   if (!ok(r.ok, `依赖 ${d.id} 装好${r.ok ? "" : "：" + r.message}`)) return fail(`依赖 ${d.id} 装不上`);
