@@ -1,10 +1,10 @@
 // 检查配方格式（PR 时 CI 跑；本地也可以跑）：node tools/check-recipes.mjs
 import fs from "node:fs";
 import path from "node:path";
-import { recipes, modelsOf } from "./lib.mjs";
+import { recipes, modelsOf, hostApiOf } from "./lib.mjs";
 
 const KNOWN = new Set(["schema", "id", "kind", "revision", "version", "name", "desc", "repos", "roots", "exclude", "files",
-  "fetch", "npm", "pip", "requires", "bin", "selftest", "needs", "license", "homepage", "maintainers", "notes", "category"]);
+  "fetch", "npm", "pip", "requires", "bin", "selftest", "needs", "license", "homepage", "maintainers", "notes", "category", "hostApi"]);
 // 分类（App 扩展页的分类索引条按它分）：只认这几个，界面上有对应的译名
 const CATEGORIES = new Set(["dev", "office", "media", "science", "eda", "cad", "ai", "gpu", "net", "other"]);
 const KINDS = new Set(["termux", "glibc"]);
@@ -39,6 +39,7 @@ for (const r of recipes()) {
   if (ids.has(r.id)) err(n, "id 重复"); ids.add(r.id);
   if (r.id === "index") err(n, "index 是保留名（索引的 Release 用它）");
   for (const e of modelsOf(r).errors) err(n, e);
+  try { hostApiOf(r); } catch (e) { err(n, e.message); }
   if (!KINDS.has(r.kind || "termux")) err(n, `kind "${r.kind}" 还不支持（termux / glibc）`);
   if (r.version !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(r.version)) err(n, "version 只能用字母数字 . _ -（≤40）");
   if (!Number.isInteger(r.revision) || r.revision < 1) err(n, "revision 必须是 ≥1 的整数");

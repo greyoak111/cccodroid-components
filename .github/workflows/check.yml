@@ -21,6 +21,7 @@ jobs:
         with:
           node-version: 22
       - run: node tools/check-recipes.mjs
+      - run: node --test tests/host-api.test.mjs tests/audit-selection.test.mjs
       - run: node tools/ci-build.mjs --devkit app/devkit --dry
 
   # 审计：真打一次包（不上传），静态检查产物（tools/audit.mjs）；再在 termux-docker 里实跑 selftest

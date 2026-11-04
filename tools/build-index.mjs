@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { ROOT, REPO, APP_REPO, recipes, run, asset, modelsOf } from "./lib.mjs";
+import { ROOT, REPO, APP_REPO, recipes, run, asset, modelsOf, hostApiOf } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : undefined; };
@@ -62,6 +62,7 @@ for (const r of recipes()) {
     const m = JSON.parse(fs.readFileSync(path.join(dl, f), "utf8"));
     const name = asset(m.id, m.version, m.base.gz);
     if (m.id !== r.id || !names.has(name + ".tar.gz")) continue;       // 包没传完的不收
+    try { hostApiOf(m); } catch (e) { throw new Error(`${r.id}/${f}: ${e.message}`); }
     all.push(m);
     const cur = byBase.get(m.base.gz);
     if (!cur || vcmp(m.version, cur.version) > 0) byBase.set(m.base.gz, { ...m, asset: name + ".tar.gz" });
@@ -73,6 +74,7 @@ for (const r of recipes()) {
     maintainers: r.maintainers || [], needs: r.needs || {}, requires: r.requires || [],
     ...((m) => (m.length ? { models: m } : {}))(modelsOf(r).models),
     builds: [...byBase.values()].map((m) => {
+      const hostApi = hostApiOf(m);
       let v = verified[r.id]?.[m.version]?.[m.base.gz.slice(0, 12)] || null;
       if (!v) {
         const why = [];
@@ -90,6 +92,8 @@ for (const r of recipes()) {
         url: `https://github.com/${REPO}/releases/download/${encodeURIComponent(r.id)}/${encodeURIComponent(m.asset)}`, asset: m.asset,
         sha256: m.gz.sha256, bytes: m.gz.bytes, installed: m.installed,
         bin: m.bin, skill: m.skill, selftest: m.selftest, packages: m.packages.length,
+        // 只取这份历史构建的声明；当前配方的能力要求不能套到旧包，也不写组件顶层 fallback。
+        ...(hostApi ? { hostApi } : {}),
         // 依赖链里由底座提供的包：cccodroid 0.4.0 起的模块化工具包据此算出组件要先装哪些模块
         baseDeps: (m.baseDeps || []).map((d) => d.name),
         verified: v,

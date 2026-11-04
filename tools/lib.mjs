@@ -16,6 +16,15 @@ export const bases = () => JSON.parse(fs.readFileSync(path.join(ROOT, "bases.jso
 export const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", maxBuffer: 1 << 28, ...opts });
 // 版本号里的 : ~ + 之类 GitHub 资产名会改掉，统一换成 _
 export const asset = (id, version, baseSha) => `${id}-${String(version).replace(/[^A-Za-z0-9._-]/g, "_")}-for-${baseSha.slice(0, 12)}`;
+// 可选的最低宿主能力。旧包不带标记；显式声明目前只接受这一种精确 schema，不能把未知能力静默丢掉。
+export function hostApiOf(meta) {
+  if (!Object.hasOwn(meta, "hostApi")) return undefined;
+  const h = meta.hostApi;
+  if (!h || typeof h !== "object" || Array.isArray(h) || Object.keys(h).length !== 1
+    || !Object.hasOwn(h, "remoteSession") || h.remoteSession !== 1)
+    throw new Error('hostApi 省略或严格写成 { "remoteSession": 1 }（不接受空对象、未知能力或其它版本）');
+  return { remoteSession: 1 };
+}
 // 组件附带的模型目录（目前只有 llama-cpp 用）：recipes/<id>/models.json，进签名索引，App 的「下载模型」按它列。
 // 索引签了名，sha256 就可信；repo / file 严格限字符，App 拿它们拼下载地址（魔搭 / HF / hf-mirror），不许塞路径或别的站。
 export const MODEL_TAGS = new Set(["think", "code"]);
