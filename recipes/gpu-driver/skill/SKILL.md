@@ -73,6 +73,9 @@ gpu-run --vendor <程序>                   # 不注入任何东西，用系统�
 - 首次跑 `-z` 会编译着色器，慢是正常的；缓存预热后再比较性能。
 - Adreno 830 / 骁龙 8 Elite 上 Turnip 可能提交失败（社区已知），用 `--vendor` 兜底。
 - Android 16 起 OEM 可能对 GPU ioctl 加白名单，新驱动会被拒（本机 Android 15 无此问题）。
+- **有的系统不给普通应用用厂商 OpenCL**（实测一加 Ace 7 Pro / Android 17）：`/vendor/lib64/libOpenCL.so` 只是 ICD 加载器，
+  系统里没有 ICD 清单，真正的 `libOpenCL_adreno.so` 又被 linker 命名空间挡住，`gpu-info` 的 OpenCL 段会写「没有平台」、总结 `opencl=-`。
+  这不是组件坏了，GPU 计算改走 Vulkan（Turnip）。
 
 ## 需要用户同意
 

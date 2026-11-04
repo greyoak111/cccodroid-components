@@ -105,6 +105,9 @@ A --> U: 收到 ABC 123
 - 真机上 `fc-list` 不一定装了，但字体查找本身由库完成，不需要命令行工具；实测中文能正常渲染。
 - 如果中文全是方块：确认设备上存在 `/system/fonts/NotoSansCJK-Regular.ttc`；没有的话装一个带中文字体的系统
   （组件不带字体，避免体积和许可问题）。
+- **PlantUML 的 title 是粗体**，有的机器 `/system/fonts` 里只有常规字重的 CJK 字体（实测一加 Ace 7 Pro），
+  标题会变方块、正文正常。图里写中文时在开头加一行 `skinparam defaultFontName "Noto Sans CJK SC"`（只管标题就用
+  `titleFontName`），实测标题恢复正常。
 - PlantUML 报 `no fontmanager in system library path` 不是字体问题，是 `openjdk-21-x` 没装上：
   重装本组件，或检查 `$PREFIX/lib/jvm/java-21-openjdk/lib/libfontmanager.so` 是否存在。
 
@@ -122,6 +125,7 @@ A --> U: 收到 ABC 123
 |---|---|
 | `UnsatisfiedLinkError: no fontmanager in system library path` | `openjdk-21-x` 缺失（组件没装全）；重装本组件 |
 | 中文全变方块 | fontconfig 看不到 CJK 字体；检查 `/system/fonts/NotoSansCJK-Regular.ttc` |
+| 只有 PlantUML 的标题是方块 | 系统缺粗体 CJK；加 `skinparam defaultFontName "Noto Sans CJK SC"` |
 | PlantUML 每一张图都要等两三秒 | 每次调用都新起 JVM，属正常；多图合并成一次调用 |
 | 类图报找不到 dot / 图出不来 | Graphviz 不在 PATH；本组件已带 `dot`，重装组件或检查 `$PREFIX/bin/dot` |
 | `plantuml` 报找不到 jar | `$PREFIX/share/java/plantuml.jar` 缺失；重装组件 |

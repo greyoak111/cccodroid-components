@@ -43,13 +43,14 @@ def cl_str(fn, handle, param):
 
 
 def probe_opencl(path=None):
+    """跑通向量加才算 OpenCL 可用：没有平台、没有设备、kernel 编不过都返回 False（gpu-info 总结行看退出码）"""
     path = path or os.path.join(PREFIX, "lib", "libOpenCL.so")
     hdr("OpenCL: " + path)
     try:
         cl = CDLL(path)
     except OSError as e:
         print("dlopen 失败:", e)
-        return
+        return False
     print("dlopen OK")
 
     cl.clGetPlatformIDs.restype = c_int
@@ -57,7 +58,7 @@ def probe_opencl(path=None):
     n = c_uint(0)
     if cl.clGetPlatformIDs(0, None, byref(n)) != 0 or n.value == 0:
         print("没有平台（ocl-icd 且无 ICD？）")
-        return
+        return False
     plats = (c_void_p * n.value)()
     cl.clGetPlatformIDs(n.value, plats, None)
 
@@ -72,7 +73,7 @@ def probe_opencl(path=None):
     dn = c_uint(0)
     if cl.clGetDeviceIDs(plats[0], 0xFFFFFFFF, 0, None, byref(dn)) != 0 or dn.value == 0:
         print("没有设备")
-        return
+        return False
     devs = (c_void_p * dn.value)()
     cl.clGetDeviceIDs(plats[0], 0xFFFFFFFF, dn.value, devs, None)
 
@@ -108,7 +109,7 @@ def probe_opencl(path=None):
     mc = cl.clCreateBuffer(ctx, 2, mb, None, byref(err))
     if not (ctx and q and ma and mbb and mc):
         print("  buffer/context 创建失败 err=%d" % err.value)
-        return
+        return False
     src = (b"__kernel void vadd(__global const float*a,__global const float*b,"
            b"__global float*c,unsigned int n){int i=get_global_id(0);if(i<n)c[i]=a[i]+b[i];}\n")
     cl.clCreateProgramWithSource.restype = c_void_p
@@ -118,7 +119,7 @@ def probe_opencl(path=None):
     cl.clBuildProgram.argtypes = [c_void_p, c_uint, POINTER(c_void_p), c_char_p, c_void_p, c_void_p]
     if cl.clBuildProgram(prog, 1, devs, None, None, None) != 0:
         print("  kernel 编译失败")
-        return
+        return False
     cl.clCreateKernel.restype = c_void_p
     cl.clCreateKernel.argtypes = [c_void_p, c_char_p, POINTER(c_int)]
     k = cl.clCreateKernel(prog, b"vadd", byref(err))
@@ -139,6 +140,7 @@ def probe_opencl(path=None):
     cl.clFinish(q)
     ok = all(abs(out[i] - 3 * i) < 1e-3 for i in range(N))
     print("  vector add: %s" % ("PASS" if ok else "FAIL"))
+    return ok
 
 
 # ---------------------------------------------------------------- Vulkan
@@ -418,7 +420,7 @@ if __name__ == "__main__":
     elif cmd == "render":
         probe_render(sys.argv[2] if len(sys.argv) > 2 else "mesa")
     elif cmd == "opencl":
-        probe_opencl(sys.argv[2] if len(sys.argv) > 2 else None)
+        sys.exit(0 if probe_opencl(sys.argv[2] if len(sys.argv) > 2 else None) else 1)
     else:
         print(__doc__)
         sys.exit(2)

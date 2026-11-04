@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "gpu-driver-glibc",
   "kind": "glibc",
-  "revision": 2,
+  "revision": 3,
   "name": { "zh": "GPU 驱动（glibc / Linux arm64）", "en": "GPU driver (glibc / Linux arm64)" },
   "desc": {
     "zh": "让 glibc（Linux arm64）程序用上本机 Adreno GPU：glibc 侧的 Turnip（Vulkan 1.3，termux-glibc 仓库的 Mesa 24.2）+ 命令行包装器 lgpu-run（拼对 glibc 运行时与 ICD，经 ld-linux 启动）。给 Debian 包、Blender 这类 glibc 程序用；OpenGL 走 zink（需自备 glibc 版 Mesa），OpenCL 走 clvk。",

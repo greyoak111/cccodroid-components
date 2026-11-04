@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "diagrams",
   "kind": "termux",
-  "revision": 2,
+  "revision": 3,
   "version": "1.2026.9",
   "name": { "zh": "图表与 UML（Graphviz + PlantUML）", "en": "Diagrams and UML (Graphviz + PlantUML)" },
   "desc": {

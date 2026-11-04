@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "gpu-driver",
   "kind": "termux",
-  "revision": 2,
+  "revision": 3,
   "name": { "zh": "GPU 驱动（高通 Adreno）", "en": "GPU driver (Qualcomm Adreno)" },
   "desc": {
     "zh": "让命令行程序用上本机 Adreno GPU：开源的 Turnip Vulkan 1.4 驱动 + Mesa zink（OpenGL/GLES），免 root、进程级生效，不动系统分区。可跑 Vulkan 计算与渲染（llama.cpp、vkmark 之类）、离屏 OpenGL（无显示服务器），并让 OpenCL 程序用上厂商驱动。",

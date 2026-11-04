@@ -43,6 +43,10 @@ if [ -x "$VKINFO" ] && [ -x "$LD" ] && [ -x "$LGRUN" ]; then
   if [ "$turnip_ok" != 1 ]; then
     echo "(vulkaninfo 没报出 Turnip，末尾几行：)"
     printf '%s\n' "$out" | tail -5 | sed 's/^/   /'
+    case "$out" in *"is unsupported"*)
+      echo "(这块 GPU 比本组件的 Turnip（Mesa 24.2）新，它还不认识；bionic 侧的 gpu-driver 用的是新版 Mesa，先用那边，"
+      echo " 或者有更新的 glibc 版 Mesa 时用 lgpu-run --icd 指过去)" ;;
+    esac
   fi
 else
   echo "(缺 $VKINFO —— 组件包不完整，重装 gpu-driver-glibc)"

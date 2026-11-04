@@ -116,6 +116,9 @@ OpenCL C 编成 SPIR-V（市场组件不带）。
 - Android 上没有 `/dev/dri/*`，所以 `EGL_PLATFORM=surfaceless`（`-z` 默认已设）；
   需要窗口的程序仍然跑不了（没有 X11/Wayland 服务端）。
 - 只对高通 Adreno 有效（走 `/dev/kgsl-3d0`）。
+- **这里的 Turnip 是 Mesa 24.2，认不出较新的芯片**：实测 Adreno 840（一加 Ace 7 Pro）报
+  `device (chip_id = …) is unsupported`，clvk 跟着不可用；同一台机器上 bionic 侧的 `gpu-driver`（Mesa 26）正常。
+  遇到这个报错别当成系统限制：有更新的 glibc 版 Mesa 时用 `lgpu-run --icd <它的 icd.json>` 指过去，否则先走 bionic 侧。
 
 ## 需要用户同意
 
