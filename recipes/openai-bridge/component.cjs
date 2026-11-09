@@ -19,8 +19,11 @@ try{
   }else if(command==='gui-status'||command==='gui-configure'||command==='gui-models'){
     // 图形配置和模型清单只通过继承的 stdin 管道传秘密；不接受 argv 参数，不经旧私有管理器。
     run(path.join(__dirname,'installer.cjs'),[command,...args]);
+  }else if(['add-provider','edit-provider','remove-provider'].includes(command)){
+    // 当前安装器在共享锁内修改自己的已核对实例，不委派给旧私有 manage.cjs。
+    run(path.join(__dirname,'installer.cjs'),[command,...args]);
   }else if(command==='help'||command==='--help'){
-    console.log('openai-bridge --selftest | configure | start | status | stop --yes | uninstall --yes [--purge]\nApp 实例操作：ensure | uninstall --dir 目录 --endpoint 本机地址 --instance 实例ID [--yes]\n--endpoint/--instance 必须成对；--purge 会永久删除整个专用目录，含密钥和日志，须另行确认。\nconfigure 请用户自己在终端输入端点和密钥；安全修复范围与未完成的发布验证见源仓库 SECURITY.md。');
+    console.log('openai-bridge --selftest | configure | start | status | stop --yes | uninstall --yes [--purge]\n上游管理：add-provider --config 私有JSON --yes | edit-provider --provider 名称 --config 私有JSON --yes | remove-provider --provider 名称 --yes\nApp 实例操作：ensure | uninstall --dir 目录 --endpoint 本机地址 --instance 实例ID [--yes]\n--endpoint/--instance 必须成对；--purge 会永久删除整个专用目录，含密钥和日志，须另行确认。\nconfigure 请用户自己在终端输入端点和密钥；安全修复范围与未完成的发布验证见源仓库 SECURITY.md。');
   }else if(['configure','start','ensure','status','stop','uninstall'].includes(command)){
     const options=api.parse(args);
     if(options['show-key']||options['bundled-runtime'])throw new Error('组件入口不允许此参数。');

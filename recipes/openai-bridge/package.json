@@ -29,6 +29,7 @@
   "scripts": {
     "test:app": "node tests/test-app-lifecycle.cjs",
     "test:models-app": "node tests/test-gui-models-app.cjs",
-    "test": "node tests/test-registration.cjs && node tests/test-installer.cjs && node tests/test-uninstall-instance.cjs && node tests/test-gui-config.cjs && node tests/test-gui-models.cjs && node tests/test-hooks.cjs && node tests/test-install-e2e.cjs && node tests/test-install-e2e.cjs --bundled && node tests/test-response.cjs && node tests/test-security.cjs && python3 tests/test-integration.py && node tests/test-health.cjs && node runtime/selftest.cjs"
+    "test:watchdog": "node tests/test-health.cjs && node tests/test-hooks.cjs && python3 tests/test-watchdog-transient.py",
+    "test": "node tests/test-registration.cjs && node tests/test-installer.cjs && node tests/test-multi-provider.cjs && node tests/test-uninstall-instance.cjs && node tests/test-gui-config.cjs && node tests/test-gui-models.cjs && node tests/test-hooks.cjs && node tests/test-install-e2e.cjs && node tests/test-install-e2e.cjs --bundled && node tests/test-response.cjs && node tests/test-security.cjs && python3 tests/test-integration.py && node tests/test-health.cjs && node runtime/selftest.cjs"
   }
 }

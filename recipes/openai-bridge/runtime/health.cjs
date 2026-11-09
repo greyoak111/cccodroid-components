@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // 仅探测安装时选定的回环端口，完全不连接用户的远端 API。
 const http = require("node:http");
+const net = require("node:net");
+const { randomBytes } = require("node:crypto");
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { performance } = require("node:perf_hooks");
@@ -145,20 +147,85 @@ function requestCode(error) {
   return "REQUEST_ERROR";
 }
 
+// 只有已监听的独立回环对照也失败，才能把服务故障归为探测环境不可用。
+// 不读系统策略、不连远端、不把 PID 存活当健康；端口随机且只接受随机短令牌。
+function loopbackAvailable() {
+  return new Promise((resolve) => {
+    const token = randomBytes(16);
+    const sockets = new Set();
+    let client, timer, done = false, listening = false;
+    const server = net.createServer((socket) => {
+      if (done || sockets.size >= 4) { socket.destroy(); return; }
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("close", () => sockets.delete(socket));
+      let bytes = Buffer.alloc(0);
+      socket.on("data", (part) => {
+        if (bytes.length + part.length > token.length) { socket.destroy(); return; }
+        bytes = Buffer.concat([bytes, part]);
+        if (bytes.length === token.length) {
+          if (bytes.equals(token)) socket.end(token);
+          else socket.destroy();
+        }
+      });
+    });
+    const complete = (available) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      client?.destroy();
+      for (const socket of sockets) socket.destroy();
+      server.close();
+      resolve(available);
+    };
+    // null=无法构造有效对照，不能据此延期服务故障（如资源耗尽或 bind 失败）。
+    server.on("error", () => complete(null));
+    timer = setTimeout(() => complete(listening ? false : null), 2000);
+    try {
+      server.listen(0, "127.0.0.1", () => {
+        if (done) { server.close(); return; }
+        listening = true;
+        client = net.connect({ host: "127.0.0.1", port: server.address().port });
+        client.on("connect", () => client.write(token));
+        let bytes = Buffer.alloc(0);
+        client.on("data", (part) => {
+          if (bytes.length + part.length > token.length) { complete(null); return; }
+          bytes = Buffer.concat([bytes, part]);
+          if (bytes.length === token.length) complete(bytes.equals(token) ? true : null);
+        });
+        client.on("error", (error) => complete(
+          ["EACCES", "EPERM", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"].includes(error.code) ? false : null));
+        client.on("end", () => complete(null));
+      });
+    } catch { complete(null); }
+  });
+}
+
 const args = process.argv.slice(2);
+const diagnose = args.at(-1) === "--diagnose";
+if (diagnose) args.pop();
 const validShape = args.length === 1 || (args.length === 3 && args[1] === "--log");
 const validArgs = validShape && typeof args[0] === "string" &&
   args[0].length >= 4 && args[0].length <= 5 && args[0][0] !== "0" &&
   !/[^0-9]/.test(args[0]) && Number(args[0]) >= 1024 && Number(args[0]) <= 65535;
 const logPath = validShape && args.length === 3 ? args[2] : undefined;
 let finished = false, request, response, deadline;
-function finish(code) {
+async function finish(code) {
   if (finished) return;
   finished = true;
   clearTimeout(deadline);
-  process.exitCode = code ? 1 : 0;
   response?.destroy();
   request?.destroy();
+  let exitCode = code ? 1 : 0;
+  if (diagnose && (code === "DEADLINE_2000MS" || REQUEST_CODES.has(code))) {
+    try {
+      if (await loopbackAvailable() === false) {
+        code = "LOOPBACK_UNAVAILABLE";
+        exitCode = 2;
+      }
+    } catch { /* 无法完成对照时按原服务故障处理，不能无证据延期。 */ }
+  }
+  process.exitCode = exitCode;
   if (code) {
     const line = diagnostic(code);
     if (logPath === undefined) stderr(line);

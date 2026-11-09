@@ -2,12 +2,12 @@
   "schema": 1,
   "id": "openai-bridge",
   "kind": "termux",
-  "revision": 17,
+  "revision": 19,
   "version": "1.0.5",
   "name": { "zh": "OpenAI API 本地协议桥（预览）", "en": "Local OpenAI API bridge (preview)" },
   "desc": {
-    "zh": "将用户自有的 OpenAI Chat Completions API 转为本机 Anthropic Messages 接口，请求发往用户配置的远端。含 CCR 1.0.73 修复、多模型路由、有限恢复及安全探活诊断；图形多模型和独立窗口需配套 App。预览组件，不提供模型或额度，约 105 MiB。",
-    "en": "Adapt an authorized Chat Completions API to local Anthropic Messages, using the user's remote service. Includes CCR 1.0.73 fixes, multi-model routing, bounded recovery and safe health diagnostics. GUI models and individual context windows need a paired App. Preview; no model or quota, about 105 MiB."
+    "zh": "将用户自有的 OpenAI Chat Completions API 转为本机 Anthropic Messages 接口。含 CCR 1.0.73 修复、多模型路由、多个 OpenAI 兼容上游及在线增删改、有限恢复与安全探活；图形多API、多模型和独立窗口需配套 App。预览组件，不提供模型或额度，约 105 MiB。",
+    "en": "Adapt authorized Chat Completions APIs to local Anthropic Messages, using the user's remote services. Includes CCR 1.0.73 fixes, multi-model routing, multiple OpenAI-compatible upstreams with online add/edit/remove, bounded recovery and safe diagnostics. GUI APIs, models and individual context windows need a paired App. Preview; no model or quota, about 105 MiB."
   },
   "roots": ["nodejs", "bash", "util-linux", "coreutils"],
   "bin": ["openai-bridge"],
@@ -40,5 +40,5 @@
     "usr/lib/openai-bridge/runtime/health.cjs": { "src": "runtime/health.cjs" },
     "usr/lib/openai-bridge/runtime/service-registration.cjs": { "src": "runtime/service-registration.cjs" }
   },
-  "notes": "r17从上游源码同步，在r16基础上补Gemini 3工具调用thought signature回传（cccodroid #91）：按调用id在进程内有界记忆，只回给同一上游模型；Gemini缺签名时按Google文档填占位值，非Gemini请求不加字段。含r15审查后的配置崩溃续配和看护并发修正，保留正式r14的Android执行层、受管升级/卸载和推理参数回退。配套App可保存至多100个模型及逐模型窗口：有效元数据优先，缺失200000，保留手动值。清单先由用户同意，只GET同源/models，不推理/不切会话/不跟重定向；固定组件以stdin接Key，不回显。组件只接模型ID，窗口由App管理。恢复故障固定码优先于残存health；状态/保存/Hook/普通ensure不清恢复锁，不实现GUI重置。只有精确configuring临时事务残留可在用户明确保存、身份核对和完整提交后清除，其他停用标记/恢复次数不清。探活仅时间/固定码，有绝对截止和有界日志，不记正文/头/对话；入口缺失有界重确认不替代恢复预算。可信HOME根统一真实路径，实例以下链接/身份/完整性检查不放宽。需要配套App和v1注册/ensure；先发布兼容App，再发布组件并经用户确认配置或迁移。仅改专用私有副本，不改Claude Code、签名根或其他服务。源码隔离测试不等于真机界面/签名安装验收，不伪造verified.json。首次午夜探活失败诱因仍未知，恢复运行不等于全部根因修复。修改上游后由recipe/sync.sh同步，依赖仍按锁文件和指纹验证。"
+  "notes": "r19源码候选：已就绪实例采用独立300秒健康宽限；故障探活增加随机回环对照，仅对照也失败时等待本机传输恢复，不重启、不消费预算、不报告就绪。真正退出、持续服务/补丁失败仍有限恢复。调度长空窗不计连续健康或失败。原有恢复锁/停用/实例校验保留，不代表首次午夜诱因已查明。保留r17的Gemini 3工具调用thought signature回传兼容。含r15/r16审查后的配置崩溃续配和看护并发修正，保留正式r14的Android执行层、受管升级/卸载和推理参数回退。配套App可保存至多100个模型及逐模型窗口：有效元数据优先，缺失200000，保留手动值。清单先由用户同意，只GET同源/models，不推理/不切会话/不跟重定向；固定组件以stdin接Key，不回显。组件只接模型ID，窗口由App管理。恢复故障固定码优先于残存health；状态/保存/Hook/普通ensure不清恢复锁，不实现GUI重置。只有精确configuring临时事务残留可在用户明确保存、身份核对和完整提交后清除，其他停用标记/恢复次数不清。探活仅时间/固定码，有绝对截止和有界日志，不记正文/头/对话；入口缺失有界重确认不替代恢复预算。可信HOME根统一真实路径，实例以下链接/身份/完整性检查不放宽。需要配套App和v1注册/ensure；先发布兼容App，再发布组件并经用户确认配置或迁移。仅改专用私有副本，不改Claude Code、签名根或其他服务。源码隔离测试不等于真机界面/签名安装验收，不伪造verified.json。首次午夜探活失败诱因仍未知，恢复运行不等于全部根因修复。修改上游后由recipe/sync.sh同步，依赖仍按锁文件和指纹验证。 多上游：可选 providers 数组（附加上游）生成多个 CCR Providers 与 MODEL_ROUTES；可见模型全局去重，重名显示为 <provider>/<model>，合计 1–100；connection.json 仍保持 schema 1，上游 Key 只在私有 CCR 配置。同批配套App可新增/编辑/移除多个API，组件以capabilities.multiUpstream标记能力；upstreams全量保存模型显式别名，留空Key按名称和origin复用；旧单表单保留附加上游。CLI add/edit/remove-provider无需卸载，确认后原子更新同一实例；清单按provider选择单endpoint不跨源发Key。签名缓存绑定session/provider/model/toolCallId，身份缺失不复用。"
 }

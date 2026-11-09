@@ -12,6 +12,9 @@ URL="http://127.0.0.1:$PORT/health"
 export SERVICE_PORT="$PORT"
 INTERVAL=${CCR_BRIDGE_INTERVAL:-5}
 GRACE=${CCR_BRIDGE_GRACE:-15}
+HEALTH_GRACE=${CCR_BRIDGE_HEALTH_GRACE:-300}
+[[ "$HEALTH_GRACE" =~ ^[0-9]{1,4}$ ]] && (( 10#$HEALTH_GRACE <= 3600 )) || return 1
+HEALTH_GRACE=$((10#$HEALTH_GRACE))
 FAIL_LIMIT=${CCR_BRIDGE_FAIL_LIMIT:-3}
 START_TIMEOUT=${CCR_BRIDGE_START_TIMEOUT:-65}
 RECOVERY_LIMIT=${CCR_BRIDGE_RECOVERY_LIMIT:-3}
@@ -108,6 +111,7 @@ bridge_instance() {
 }
 
 bridge_healthy() {
+  BRIDGE_HEALTH_RC=1
   if ! bridge_pid >/dev/null; then
     BRIDGE_HEALTH_LOG_HEALTHY_SINCE=-1
     return 1
@@ -115,10 +119,12 @@ bridge_healthy() {
   # 日志失效每轮只报一次固定诊断；须连续成功探活 300 秒才允许下一轮报告。
   # 任何失败（含 PID 消失）中断计时，不能靠故障持续时间或短暂成功反复刷屏。
   local diagnostic rc code
+  local -a options=()
+  [[ "${1:-}" = --diagnose ]] && options=(--diagnose)
   if (( ${BRIDGE_HEALTH_LOG_FAILED:-0} )); then
-    node "$BR/health.cjs" "$PORT" --log "$STATE/health.log" 2>/dev/null; rc=$?
+    node "$BR/health.cjs" "$PORT" --log "$STATE/health.log" "${options[@]}" 2>/dev/null; rc=$?
   else
-    diagnostic=$(node "$BR/health.cjs" "$PORT" --log "$STATE/health.log" 2>&1); rc=$?
+    diagnostic=$(node "$BR/health.cjs" "$PORT" --log "$STATE/health.log" "${options[@]}" 2>&1); rc=$?
     if [[ -n "$diagnostic" ]]; then
       BRIDGE_HEALTH_LOG_FAILED=1
       while IFS= read -r code; do
@@ -137,6 +143,7 @@ bridge_healthy() {
       BRIDGE_HEALTH_LOG_HEALTHY_SINCE=-1
     fi
   fi
+  BRIDGE_HEALTH_RC=$rc
   return "$rc"
 }
 

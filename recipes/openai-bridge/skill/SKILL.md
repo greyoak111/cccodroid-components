@@ -49,6 +49,18 @@ openai-bridge configure
 
 用户填写完整 Chat Completions URL（例如 `https://api.example.com/v1/chat/completions`）、自己有权使用的 API Key 和模型名。不是 Responses API，也不是仅填服务域名。**不要索要、读取、打印、转述 API Key 或密码，不要读取真实配置或 connection.json。**
 
+需要多个 OpenAI 兼容上游时，同一个 `configure` 会继续询问是否再添加一个 API；非交互安装也可在私有 `--config` JSON 里加可选 `providers` 数组（顶层仍是第一个上游）。配套 App 通过 `capabilities.multiUpstream` 识别新增/编辑/移除 API 的能力，各 API 独立保存地址/Key/模型；模型清单只查当前选中的 API。名称和 origin 同时匹配才允许复用留空 Key；不把一家 Key 发给另一家。旧 App 的单地址表单仍可用，保存保留附加上游。重名模型使用稳定 `<provider>/<model>` 别名，可见模型总数限100，上游数限16；每模型窗口仍由 App 存储。
+
+已有实例可以在线管理，不需要卸载或手改私有运行配置。先确认没有请求运行，由用户自己填写0600私有 JSON（endpoint、apiKey、model、可选 models/name），再执行：
+
+```sh
+openai-bridge add-provider --config /absolute/private/provider.json --yes
+openai-bridge edit-provider --provider relay-2 --config /absolute/private/provider.json --yes
+openai-bridge remove-provider --provider relay-2 --yes
+```
+
+操作会停止/重启同一已验证桥实例，保留本地密钥、注册和恢复锁；不能移除最后一个 API。随后在 App 配置页保存/同步模型清单，不切当前会话。不要由 AI 读取/检查/打印私有 JSON 或真实 Key。`openai-bridge status` 只列上游名称、地址和模型 ID；`connection.json` 仍保持本地认证格式。
+
 已获用户授权后，AI 可非交互启动、查看状态（输出不含密钥）：
 
 ```sh
@@ -80,7 +92,8 @@ openai-bridge uninstall --yes
 - 看护默认连续启动/修补最多3次，健康连续5分钟才自动清尚未耗尽的预算；故障标记存在时不能靠健康残存进程解除。持续失败写故障标记并退出，不无限重启。打开页面、保存、Hook 和普通 ensure 均不清故障。排查后只有获用户明确确认才能运行 `openai-bridge start --reset-recovery --yes`，仍须固定入口、实例身份和忙碌保护；不要自动重置或借循环 start 绕过预算。**本版没有 GUI“重置并启动”按钮。**
 - 探活失败仅记录时间和固定错误码，不记响应正文、请求头或对话。安全日志有权限、大小和保留界限；日志写入故障每轮只报一次，连续成功探活300秒后才重新允许报告，短暂成功不复位。不能把新的诊断能力当作过去已留有证据。首次午夜探活失败原因仍未知，不能归因为已证实的 argv、日志轮转、网络或系统省电问题，也不能把重置后恢复运行说成全部根因已修复。
 - 组件包解开约 105 MiB；首次配置还会额外复制一份私有运行副本，请预留空间。
-- 约每 5 秒探活，重启受失败次数、宽限和探活耗时影响，不保证 5 秒恢复。补丁变化需重启加载，不能未经确认影响别的会话。
+- r18候选将已就绪实例的运行中健康宽限独立为300秒，启动/连续崩溃仍用15秒。仅看护诊断模式在桥探活网络失败后增加随机回环短令牌对照：对照也不可达才记录 `LOOPBACK_UNAVAILABLE` 并等待，不杀进程、不消费预算、不宣称就绪。对照恢复后继续检查桥；桥真的退出、持续自身故障和补丁失败仍走有限恢复。长调度空窗不计连续健康/失败。既有故障锁、停用和身份检查全部保留；仍需正式组件更新，不能直接改私有脚本冒充官方运行版本。
+- 约每5秒探活；单次服务探活2秒，对照另限2秒，重启受失败次数、宽限和调度影响，不保证5秒恢复。补丁变化需重启加载，不能未经确认影响别的会话。
 - Gemini 3 的 OpenAI 兼容接口要求工具调用带回 thought signature，否则 400。桥按调用 id 在进程内记下上游返回的签名（最多 1024 条），下一轮只回给同一上游模型；桥重启或换过模型后拿不到签名时，对模型名含 gemini 的请求按 Google 文档填占位值 `skip_thought_signature_validator`，能继续但推理质量可能下降。其他模型不加这个字段。
 - 图片以 image_url 发送；本地图片计数每张 4096 只是估算，不是远端精确计费。实际计费用量以远端返回为准。
 - 文件必须在应用私有可执行目录，不在共享存储安装。依赖已随组件打包，不要再跑 npm update。

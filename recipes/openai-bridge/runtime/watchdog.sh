@@ -19,7 +19,11 @@ trap cleanup EXIT
 trap 'exit 0' TERM INT HUP
 
 FAILURES=0
-FAILED_SINCE=$SECONDS
+FAILED_SINCE=-1
+FAILED_INSTANCE=
+READY_INSTANCE=
+LOOPBACK_WAITING=0
+LAST_PROBE=-1
 LAST_START=$((-GRACE))
 HEALTHY_SINCE=-1
 ATTEMPTS=0
@@ -30,6 +34,40 @@ RECHECK_INSTANCE=0
 CONFIRM_INSTANCE=
 ENSURE_INSTANCE=
 ENSURE_DEADLINE=-1
+# 长调度空窗不是持续健康，也不是连续失败；唤醒后重新取样，不清持久预算。
+watchdog_healthy() {
+  local started=$SECONDS rc gap=$(( ${INTERVAL%%.*} + 10 ))
+  if (( LAST_PROBE >= 0 && started - LAST_PROBE > gap )); then
+    FAILURES=0
+    FAILED_SINCE=-1
+    HEALTHY_SINCE=-1
+    BRIDGE_HEALTH_LOG_HEALTHY_SINCE=-1
+  fi
+  bridge_healthy --diagnose; rc=$?
+  if (( SECONDS - started > 10 )); then
+    FAILURES=0
+    FAILED_SINCE=-1
+    HEALTHY_SINCE=-1
+    BRIDGE_HEALTH_LOG_HEALTHY_SINCE=-1
+  fi
+  LAST_PROBE=$SECONDS
+  return "$rc"
+}
+# 本机独立回环也不通时，不杀桥、不消耗启动预算、不把残留 PID 报成健康。
+# 每轮仍核对停用/入口/故障锁；桥真的退出则回到有限恢复流程。
+wait_for_loopback() {
+  [[ ! -e "$STATE/restart.request" && ${BRIDGE_HEALTH_RC:-1} = 2 ]] || return 1
+  bridge_pid >/dev/null || return 1
+  if (( ! LOOPBACK_WAITING )); then
+    bridge_log watchdog "LOOPBACK_UNAVAILABLE; keeping bridge and recovery budget, probing until local transport returns"
+    LOOPBACK_WAITING=1
+  fi
+  FAILURES=0
+  FAILED_SINCE=-1
+  HEALTHY_SINCE=-1
+  BRIDGE_HEALTH_LOG_HEALTHY_SINCE=-1
+  return 0
+}
 load_attempts() {
   ATTEMPTS=0
   if [[ -r "$STATE/recovery.attempts" ]]; then
@@ -101,7 +139,7 @@ recheck_ensure() {
     ENSURE_INSTANCE=
     return 0
   fi
-  if [[ ! -e "$STATE/restart.request" ]] && bridge_healthy; then
+  if [[ ! -e "$STATE/restart.request" ]] && watchdog_healthy; then
     ENSURE_INSTANCE=
     return 0
   fi
@@ -113,9 +151,15 @@ exec 7> "$STATE/service.lock" || exit 1
 while :; do
   [[ ! -e "$STATE/recovery.failed" && ! -L "$STATE/recovery.failed" ]] || exit 1
   require_component || continue
-  if [[ ! -e "$STATE/restart.request" ]] && bridge_healthy; then
+  if [[ ! -e "$STATE/restart.request" ]] && watchdog_healthy; then
     FAILURES=0
-    FAILED_SINCE=$SECONDS
+    FAILED_SINCE=-1
+    FAILED_INSTANCE=
+    READY_INSTANCE=$(bridge_instance) || READY_INSTANCE=
+    if (( LOOPBACK_WAITING )); then
+      bridge_log watchdog "local transport and bridge health recovered; no forced restart"
+      LOOPBACK_WAITING=0
+    fi
     (( HEALTHY_SINCE >= 0 )) || HEALTHY_SINCE=$SECONDS
     if (( ATTEMPTS > 0 && SECONDS - HEALTHY_SINCE >= RECOVERY_STABLE )) && flock -n 7; then
       SERVICE_LOCKED=1
@@ -124,7 +168,7 @@ while :; do
       # 持锁重新验健康及 durable 预算；确认等待/别的 ensure 的新预算都不能被旧快照清掉。
       PREVIOUS_ATTEMPTS=$ATTEMPTS
       load_attempts
-      if [[ ! -e "$STATE/restart.request" ]] && bridge_healthy; then
+      if [[ ! -e "$STATE/restart.request" ]] && watchdog_healthy; then
         if (( HEALTHY_SINCE >= 0 && SECONDS - HEALTHY_SINCE >= RECOVERY_STABLE && ATTEMPTS == PREVIOUS_ATTEMPTS )); then
           ATTEMPTS=0
           rm -f -- "$STATE/recovery.attempts"
@@ -142,12 +186,23 @@ while :; do
   HEALTHY_SINCE=-1
   BRIDGE_HEALTH_LOG_HEALTHY_SINCE=-1
 
+  if wait_for_loopback; then
+    sleep "$INTERVAL"
+    continue
+  fi
+  INSTANCE=$(bridge_instance) || INSTANCE=
+  if [[ "$INSTANCE" != "$FAILED_INSTANCE" ]] || (( FAILED_SINCE < 0 )); then
+    FAILED_INSTANCE=$INSTANCE
+    FAILED_SINCE=$SECONDS
+    FAILURES=0
+  fi
   ((FAILURES++))
-  PID=$(bridge_pid) || PID=
   if [[ ! -e "$STATE/restart.request" ]]; then
-    # 留出启动宽限；连续失败才重启，避免短暂调度延迟就误杀正在推理的桥。
+    # 已就绪实例失联与启动/崩溃宽限分开；仅对同一 PID+启动时刻延长等待。
+    WAIT_GRACE=$GRACE
+    [[ -n "$INSTANCE" && "$INSTANCE" = "$READY_INSTANCE" ]] && WAIT_GRACE=$HEALTH_GRACE
     if (( SECONDS - LAST_START < GRACE )) ||
-      { [[ -n "$PID" ]] && (( FAILURES < FAIL_LIMIT || SECONDS - FAILED_SINCE < GRACE )); }; then
+      { [[ -n "$INSTANCE" ]] && (( FAILURES < FAIL_LIMIT || SECONDS - FAILED_SINCE < WAIT_GRACE )); }; then
       sleep "$INTERVAL"
       continue
     fi
@@ -161,7 +216,19 @@ while :; do
   require_component || continue
   recheck_ensure || continue
   load_attempts
-  if [[ ! -e "$STATE/restart.request" ]] && bridge_healthy; then
+  if [[ ! -e "$STATE/restart.request" ]] && watchdog_healthy; then
+    release_service
+    continue
+  fi
+  if wait_for_loopback; then
+    release_service
+    sleep "$INTERVAL"
+    continue
+  fi
+  # 持锁复检若出现调度空窗，或实例已变化，不能沿旧的失败快照消费预算。
+  CURRENT_INSTANCE=$(bridge_instance) || CURRENT_INSTANCE=
+  if [[ ! -e "$STATE/restart.request" ]] &&
+    { (( FAILED_SINCE < 0 )) || [[ "$CURRENT_INSTANCE" != "$INSTANCE" ]]; }; then
     release_service
     continue
   fi

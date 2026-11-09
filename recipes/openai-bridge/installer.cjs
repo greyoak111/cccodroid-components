@@ -154,30 +154,225 @@ function modelIds(value,model) {
   if(!seen.has(model))throw new Error('models 必须包含默认 model。');
   return ids;
 }
-function validateConfig(value,port) {
-  if(!object(value))throw new Error('配置输入必须是 JSON 对象。');
-  const endpoint=String(value.endpoint||'').trim();
+const MAX_PROVIDERS=16;
+const MAX_CONFIG_MODELS=100;
+const PROVIDER_NAME=/^[a-z][a-z0-9-]{0,31}$/;
+function endpointHref(value) {
+  const endpoint=String(value||'').trim();
   let url;
   try{url=new URL(endpoint);}catch{throw new Error('endpoint 不是有效 URL。');}
   if(url.protocol!=='https:' && !(url.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(url.hostname)))throw new Error('上游必须使用 HTTPS（仅本机测试允许 HTTP）。');
   if(url.username||url.password||url.search||url.hash)throw new Error('上游 URL 不能含认证信息、查询参数或片段；密钥应填写在 apiKey。');
-  const apiKey=String(value.apiKey||'').trim();
+  return url.href;
+}
+function upstreamKey(value) {
+  const apiKey=String(value||'').trim();
   if(!apiKey||/[\r\n\0]/.test(apiKey))throw new Error('apiKey 不能为空或含换行。');
-  const model=String(value.model||'').trim();
+  return apiKey;
+}
+function upstreamModel(value) {
+  const model=String(value||'').trim();
   if(!model||/[,\r\n\0]/.test(model))throw new Error('model 不能为空或包含逗号/换行。');
-  if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('端口须为 1024–65535 的整数。');
+  return model;
+}
+function providerConfig(value,index,strict=false) {
+  if(!object(value))throw new Error('providers 里的每一项必须是 JSON 对象。');
+  if(strict&&Object.keys(value).some(key=>!['name','endpoint','apiKey','model','models'].includes(key)))throw new Error('providers 只接受 name、endpoint、apiKey、model、models。');
+  if(value.name!==undefined&&(typeof value.name!=='string'||!PROVIDER_NAME.test(value.name)))throw new Error('providers.name 只能是小写字母开头的 1–32 位小写字母、数字或连字符。');
+  const endpoint=endpointHref(value.endpoint),apiKey=upstreamKey(value.apiKey),model=upstreamModel(value.model);
   const models=Object.hasOwn(value,'models')?modelIds(value.models,model):undefined;
-  return {endpoint:url.href,apiKey,model,...(models?{models}:{})};
+  return {name:value.name,endpoint,apiKey,model,...(models?{models}:{})};
+}
+function providerCatalog(provider){return provider.models?[...provider.models]:[provider.model];}
+function nameProviders(providers) {
+  const names=providers.map(provider=>provider.name),used=new Set();
+  for(const name of names){
+    if(!name)continue;
+    if(used.has(name))throw new Error('providers.name 必须唯一。');
+    used.add(name);
+  }
+  return providers.map((provider,index)=>{
+    if(provider.name)return provider;
+    let name;
+    if(index===0&&!used.has('relay'))name='relay';
+    else{let n=index+1;while(used.has('relay-'+n))n++;name='relay-'+n;}
+    used.add(name);
+    return {...provider,name};
+  });
+}
+function exposedRoutes(connections) {
+  const used=new Set(),result=[];
+  for(const connection of connections){
+    for(const model of providerCatalog(connection)){
+      let id=model;
+      if(used.has(id))id=connection.name+'/'+model;
+      if(!id||id.length>200||/[,\u0000-\u001f\u007f-\u009f]/u.test(id)||used.has(id))throw new Error('多个上游的模型 ID 无法生成唯一桥内名称：'+id);
+      used.add(id);
+      result.push({id,route:connection.name+','+model});
+    }
+  }
+  if(result.length>MAX_CONFIG_MODELS)throw new Error('多个上游的模型总数不能超过 100 个。');
+  return result;
+}
+function validateConfig(value,port) {
+  if(!object(value))throw new Error('配置输入必须是 JSON 对象。');
+  if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('端口须为 1024–65535 的整数。');
+  if(value.connections!==undefined||value.routes!==undefined){
+    if(!Array.isArray(value.connections)||!object(value.routes)||!Array.isArray(value.models))throw new Error('内部多上游配置不完整。');
+    return validateInternal(value);
+  }
+  const primary=providerConfig(value,0);
+  let additional=[];
+  if(value.providers!==undefined){
+    if(!Array.isArray(value.providers)||value.providers.length>MAX_PROVIDERS-1)throw new Error('providers 必须是 1–15 个上游的数组。');
+    additional=value.providers.map((provider,index)=>providerConfig(provider,index+1,true));
+  }
+  if(additional.some(provider=>provider.name==='relay'))throw new Error('providers.name 不能使用保留名 relay。');
+  const connections=nameProviders([primary,...additional]);
+  if(connections.length===1){
+    const connection=connections[0];
+    return {endpoint:connection.endpoint,apiKey:connection.apiKey,model:connection.model,...(connection.models?{models:connection.models}:{})};
+  }
+  const routes=exposedRoutes(connections);
+  return {endpoint:connections[0].endpoint,apiKey:connections[0].apiKey,model:connections[0].model,
+    models:routes.map(item=>item.id),connections,routes:Object.fromEntries(routes.map(item=>[item.id,item.route])),explicitModels:true};
+}
+function configConnections(c) {
+  if(Array.isArray(c.connections))return c.connections;
+  return [{name:'relay',endpoint:c.endpoint,apiKey:c.apiKey,model:c.model,...(c.models?{models:[...c.models]}:{})}];
+}
+function configRoutes(c) {
+  if(Array.isArray(c.connections))return {models:[...c.models],routes:{...c.routes}};
+  const models=c.models?[...c.models]:[c.model];
+  return {models,routes:Object.fromEntries(models.map(id=>[id,'relay,'+id]))};
+}
+function routeProvider(connections,route) {
+  if(typeof route!=='string')return null;
+  const comma=route.indexOf(',');
+  if(comma<1)return null;
+  const name=route.slice(0,comma),model=route.slice(comma+1);
+  if(!model||model.includes(',')||/[\r\n\0]/.test(model))return null;
+  const connection=connections.find(item=>item.name===name);
+  return connection&&providerCatalog(connection).includes(model)?connection:null;
+}
+function validateInternal(c) {
+  if(!object(c)||!Array.isArray(c.connections)||!c.connections.length||c.connections.length>MAX_PROVIDERS)throw new Error('内部上游配置不合法。');
+  const connections=c.connections.map(connection=>{
+    if(!object(connection)||typeof connection.name!=='string'||!PROVIDER_NAME.test(connection.name))throw new Error('内部上游配置不合法。');
+    const checked=providerConfig(connection,0,true),models=providerCatalog(checked);
+    modelIds(models,checked.model);
+    return {...checked,models};
+  });
+  const names=new Set();
+  for(const connection of connections){if(names.has(connection.name))throw new Error('内部上游名称重复。');names.add(connection.name);}
+  const models=modelIds(c.models,c.model);
+  if(!object(c.routes)||Object.keys(c.routes).length!==models.length)throw new Error('内部路由表不合法。');
+  const entries=models.map(id=>{
+    const route=Object.hasOwn(c.routes,id)?c.routes[id]:undefined;
+    if(!routeProvider(connections,route))throw new Error('内部路由表指向了未配置的上游模型。');
+    return [id,route];
+  });
+  if(new Set(entries.map(([,route])=>route)).size!==entries.length)throw new Error('每个上游模型只能对应一个可见 ID。');
+  return {endpoint:connections[0].endpoint,apiKey:connections[0].apiKey,model:c.model,models,connections,routes:Object.fromEntries(entries),explicitModels:c.explicitModels===true};
+}
+function configShape(c) {
+  // One provider keeps the original schema-1 CCR/connection format byte-for-byte.
+  if(c.connections.length===1&&c.connections[0].name==='relay'&&c.model===c.connections[0].model&&same(c.models,providerCatalog(c.connections[0]))&&c.models.every(id=>c.routes[id]==='relay,'+id)){
+    const connection=c.connections[0];
+    return {endpoint:connection.endpoint,apiKey:connection.apiKey,model:connection.model,...(c.explicitModels?{models:[...c.models]}:{})};
+  }
+  return {endpoint:c.endpoint,apiKey:c.apiKey,model:c.model,models:[...c.models],connections:c.connections,routes:{...c.routes}};
+}
+function interruptedConfig(config,connection,port) {
+  // 只在精确 configuring 标记下使用：新 CCR 配置必须独立规范，同端口/本地密钥。
+  // 默认路由从 CCR 本身读取，不沿用尚未提交的旧 connection.model。
+  try{
+    if(!object(config)||!Array.isArray(config.Providers)||!config.Providers.length||config.Providers.length>MAX_PROVIDERS||!object(config.MODEL_ROUTES))return null;
+    const connections=config.Providers.map((provider,index)=>{
+      if(!object(provider)||typeof provider.name!=='string'||typeof provider.api_base_url!=='string'||typeof provider.api_key!=='string'||!Array.isArray(provider.models)||!provider.models.length)throw 0;
+      return providerConfig({name:provider.name,endpoint:provider.api_base_url,apiKey:provider.api_key,model:provider.models[0],models:provider.models},index,true);
+    });
+    const models=Object.keys(config.MODEL_ROUTES),model=models.find(id=>config.MODEL_ROUTES[id]===config.Router?.default);
+    if(!model)return null;
+    const internal=validateInternal({model,models,connections,routes:config.MODEL_ROUTES,explicitModels:true});
+    return same(config,routerConfig(internal,port,connection.apiKey))?internal:null;
+  }catch{return null;}
+}
+function mergeGuiConfig(current,input,key) {
+  const connections=configConnections(current).map(connection=>({...connection,models:providerCatalog(connection)}));
+  const previous=configRoutes(current),primary=connections[0];
+  primary.endpoint=input.endpoint;primary.apiKey=key;
+  const normalizedModels=modelIds(input.models?[...input.models]:[input.model],input.model);
+  const entries=[];
+  for(const id of normalizedModels){
+    let route=Object.hasOwn(previous.routes,id)?previous.routes[id]:undefined;
+    if(!routeProvider(connections,route)){
+      let owner=connections.find(connection=>providerCatalog(connection).includes(id));
+      if(!owner){owner=primary;if(!providerCatalog(primary).includes(id))primary.models=[...providerCatalog(primary),id];}
+      route=owner.name+','+id;
+    }
+    entries.push([id,route]);
+  }
+  const primaryModels=entries.filter(([,route])=>routeProvider(connections,route)===primary).map(([,route])=>route.slice(route.indexOf(',')+1));
+  // 旧表单只编辑可见集合，不把第二个上游的默认 ID 塞进主上游，别名也不能改写真实模型名。
+  primary.models=primaryModels.length?primaryModels:[primary.model];
+  const selected=entries.find(([id])=>id===input.model)?.[1];
+  primary.model=routeProvider(connections,selected)===primary?selected.slice(selected.indexOf(',')+1):primary.models[0];
+  return validateInternal({endpoint:primary.endpoint,apiKey:primary.apiKey,model:input.model,models:normalizedModels,connections,routes:Object.fromEntries(entries),explicitModels:Object.hasOwn(input,'models')});
+}
+function upstreamProjection(c) {
+  const connections=configConnections(c),{models,routes}=configRoutes(c);
+  return connections.map(connection=>({name:connection.name,endpoint:connection.endpoint,hasKey:true,
+    models:models.filter(id=>routeProvider(connections,routes[id])===connection).map(id=>{
+      const model=routes[id].slice(routes[id].indexOf(',')+1);
+      return {id,...(model!==id?{model}:{})};
+    })}));
+}
+function replacementConfig(input,current) {
+  const seen=new Set(),entries=[];
+  const connections=input.upstreams.map(upstream=>{
+    const previous=current?.connections.find(connection=>connection.name===upstream.name);
+    let apiKey=upstream.apiKey;
+    if(!apiKey){
+      if(!previous)throw guiError('KEY_REQUIRED');
+      if(new URL(previous.endpoint).origin!==new URL(upstream.endpoint).origin)throw guiError('KEY_HOST_CHANGED');
+      apiKey=previous.apiKey;
+    }
+    const models=upstream.models.map(({id,model})=>{
+      if(seen.has(id))throw guiError('INVALID_INPUT');
+      seen.add(id);entries.push([id,upstream.name+','+model]);return model;
+    });
+    return {name:upstream.name,endpoint:upstream.endpoint,apiKey,model:models[0],models};
+  });
+  if(input.endpoint!==connections[0].endpoint||input.models&&!same(input.models,entries.map(([id])=>id)))throw guiError('INVALID_INPUT');
+  try{return configShape(validateInternal({model:input.model,models:entries.map(([id])=>id),connections,routes:Object.fromEntries(entries),explicitModels:true}));}
+  catch{throw guiError('INVALID_INPUT');}
+}
+function boundedConfig(c,port,key) {
+  // 路由表和模型别名也计入128KiB上限；超限必须在停服务和写配置前失败。
+  for(const value of [routerConfig(c,port,key),connectionConfig(c,'http://127.0.0.1:'+port,key),
+    {models:c.models||[c.model],upstreams:upstreamProjection(c)}]){
+    if(Buffer.byteLength(JSON.stringify(value,null,2)+'\n')>128*1024)throw guiError('INVALID_INPUT');
+  }
+  return c;
 }
 function connectionConfig(c,baseUrl,key) {
-  // models is optional: omitting it keeps the original single-model file format.
+  // The App-facing record stays schema-1: only the local endpoint, local key, default model
+  // and visible model list. Upstream definitions remain in the private CCR config.
   return {baseUrl,apiKey:key,model:c.model,...(c.models?{models:[...c.models]}:{})};
 }
 function routerConfig(c,port,key) {
-  const route='relay,'+c.model;
+  if(!Array.isArray(c.connections)){
+    const route='relay,'+c.model;
+    return {HOST:'127.0.0.1',PORT:port,APIKEY:key,LOG:true,LOG_LEVEL:'info',API_TIMEOUT_MS:600000,NON_INTERACTIVE_MODE:true,
+      Providers:[{name:'relay',api_base_url:c.endpoint,api_key:c.apiKey,models:c.models?[...c.models]:[c.model]}],
+      Router:{default:route,background:route,think:route,longContext:route,longContextThreshold:60000,webSearch:route}};
+  }
+  const route=c.routes[c.model];
   return {HOST:'127.0.0.1',PORT:port,APIKEY:key,LOG:true,LOG_LEVEL:'info',API_TIMEOUT_MS:600000,NON_INTERACTIVE_MODE:true,
-    Providers:[{name:'relay',api_base_url:c.endpoint,api_key:c.apiKey,models:c.models?[...c.models]:[c.model]}],
-    Router:{default:route,background:route,think:route,longContext:route,longContextThreshold:60000,webSearch:route}};
+    Providers:c.connections.map(connection=>({name:connection.name,api_base_url:connection.endpoint,api_key:connection.apiKey,models:providerCatalog(connection)})),
+    Router:{default:route,background:route,think:route,longContext:route,longContextThreshold:60000,webSearch:route},
+    MODEL_ROUTES:Object.fromEntries(c.models.map(id=>[id,c.routes[id]]))};
 }
 function portFree(port) {
   return new Promise(resolve=>{
@@ -367,6 +562,16 @@ function showConnection(target,showKey=false) {
   const c=json(keyfile);
   console.log('本机服务地址：'+c.baseUrl);
   console.log('模型：'+c.model);
+  const configFile=path.join(target,'runtime-home/.claude-code-router/config.json');
+  if(exists(configFile)){
+    const router=json(configFile);
+    if(Array.isArray(router.Providers)&&router.Providers.length>1){
+      for(const provider of router.Providers){
+        const models=Array.isArray(provider.models)?provider.models.join(', '):'';
+        console.log('上游 '+provider.name+'：'+provider.api_base_url+' · '+models);
+      }
+    }
+  }
   console.log('本地桥密钥文件（请勿转发）：'+keyfile);
   if(showKey)console.log('本地桥 API Key：'+c.apiKey);
   console.log('Claude 设置：'+m.settings);
@@ -417,7 +622,21 @@ async function install(options) {
     if(port===undefined&&config.port!==undefined)port=Number(config.port);
   }else{
     if(!process.stdin.isTTY)throw new Error('非交互安装需要 --config 指向私有 JSON 配置；不要把 API Key 写进命令行。');
-    config={endpoint:await ask('上游完整 OpenAI Chat Completions URL（含路径）'),apiKey:await askSecret(),model:await ask('模型名')};
+    const extra=async model=>{
+      const value=await ask('同一 API 的其他模型 ID（英文逗号分隔，可留空）');
+      return value?[...new Set([model,...value.split(',').map(item=>item.trim()).filter(Boolean)])]:undefined;
+    };
+    const endpoint=await ask('上游完整 OpenAI Chat Completions URL（含路径）'),apiKey=await askSecret(),model=await ask('模型名'),models=await extra(model);
+    config={endpoint,apiKey,model,...(models?{models}:{})};
+    const providers=[];
+    while((await ask('还要添加另一个 OpenAI 兼容 API 吗？输入 yes 继续'))==='yes'){
+      const providerEndpoint=await ask('另一个上游完整 OpenAI Chat Completions URL（含路径）');
+      const providerKey=await askSecret();
+      const providerModel=await ask('该上游的模型名');
+      const providerModels=await extra(providerModel);
+      providers.push({endpoint:providerEndpoint,apiKey:providerKey,model:providerModel,...(providerModels?{models:providerModels}:{})});
+    }
+    if(providers.length)config.providers=providers;
   }
   port??=await choosePort();
   config=validateConfig(config,port);
@@ -510,20 +729,44 @@ function normalizeGuiEndpoint(input){
   else throw guiError('INVALID_INPUT');
   return url.href;
 }
+function guiKey(value=''){
+  if(typeof value!=='string'||value.length>1024||/[\u0000- \u007f-\u009f]/u.test(value))throw guiError('INVALID_INPUT');
+  return value;
+}
+function guiUpstreams(value){
+  if(!Array.isArray(value)||!value.length||value.length>MAX_PROVIDERS)throw guiError('INVALID_INPUT');
+  const names=new Set(),ids=new Set();
+  return value.map(upstream=>{
+    if(!object(upstream)||Object.keys(upstream).some(key=>!['name','endpoint','apiKey','models'].includes(key))||typeof upstream.name!=='string'||!PROVIDER_NAME.test(upstream.name)||names.has(upstream.name)||!Array.isArray(upstream.models)||!upstream.models.length)throw guiError('INVALID_INPUT');
+    names.add(upstream.name);const raw=new Set();
+    const models=upstream.models.map(item=>{
+      if(!object(item)||Object.keys(item).some(key=>!['id','model'].includes(key)))throw guiError('INVALID_INPUT');
+      const id=item.id,model=item.model===undefined?id:item.model;
+      for(const text of [id,model])if(typeof text!=='string'||!text||text!==text.trim()||text.length>200||/[,\u0000-\u001f\u007f-\u009f]/u.test(text))throw guiError('INVALID_INPUT');
+      if(ids.has(id)||raw.has(model))throw guiError('INVALID_INPUT');
+      ids.add(id);raw.add(model);if(ids.size>MAX_CONFIG_MODELS)throw guiError('INVALID_INPUT');
+      return {id,model};
+    });
+    return {name:upstream.name,endpoint:normalizeGuiEndpoint(upstream.endpoint),apiKey:guiKey(upstream.apiKey),models};
+  });
+}
 async function guiInput(command){
   let size=0;const chunks=[],models=command==='gui-models';
   try{
     const limit=models?16384:128*1024;
     for await(const chunk of process.stdin){size+=chunk.length;if(size>limit)throw guiError('INVALID_INPUT');chunks.push(chunk);}
     const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    if(!object(input)||Object.keys(input).some(k=>!(models?['endpoint','apiKey']:['endpoint','apiKey','model','models']).includes(k))||typeof input.endpoint!=='string'||!models&&typeof input.model!=='string'||input.apiKey!==undefined&&typeof input.apiKey!=='string')throw guiError('INVALID_INPUT');
-    const apiKey=(input.apiKey||'').trim();
-    if((input.apiKey||'').length>1024||/[\u0000- \u007f]/.test(input.apiKey||''))throw guiError('INVALID_INPUT');
-    const endpoint=normalizeGuiEndpoint(input.endpoint);
-    if(models)return {endpoint,apiKey};
+    if(!object(input)||Object.keys(input).some(k=>!(models?['endpoint','apiKey','provider']:['endpoint','apiKey','model','models','upstreams']).includes(k))||typeof input.endpoint!=='string'||!models&&typeof input.model!=='string')throw guiError('INVALID_INPUT');
+    const apiKey=guiKey(input.apiKey),endpoint=normalizeGuiEndpoint(input.endpoint);
+    if(models){
+      if(input.provider!==undefined&&(typeof input.provider!=='string'||!PROVIDER_NAME.test(input.provider)))throw guiError('INVALID_INPUT');
+      return {endpoint,apiKey,...(input.provider===undefined?{}:{provider:input.provider})};
+    }
     const model=input.model.trim();
     if(!model||input.model.length>200||/[,\u0000-\u001f\u007f-\u009f]/u.test(input.model))throw guiError('INVALID_INPUT');
-    return {endpoint,apiKey,model,...(Object.hasOwn(input,'models')?{models:modelIds(input.models,model)}:{})};
+    if(input.upstreams!==undefined&&apiKey)throw guiError('INVALID_INPUT');
+    return {endpoint,apiKey,model,...(Object.hasOwn(input,'models')?{models:modelIds(input.models,model)}:{}),
+      ...(input.upstreams===undefined?{}:{upstreams:guiUpstreams(input.upstreams)})};
   }catch(error){if(error.guiCode)throw error;throw guiError('INVALID_INPUT');}
 }
 function checkGuiRuntime(paths,previous=null,allowConfiguring=false,readOnly=false){
@@ -541,7 +784,7 @@ function checkGuiRuntime(paths,previous=null,allowConfiguring=false,readOnly=fal
   instanceOptions('ensure',options);
   const stale=readOnly?[]:null,instance=checkInstance(target,options,previous?.instance,true,stale);
   const disabled=path.join(target,'disabled');
-  if(m.guiManaged!==true||m.settings!==settings||m.componentEntry!==path.join(SOURCE,'component.cjs'))throw guiError('RUNTIME_CONFLICT');
+  if(!paths.cli&&m.guiManaged!==true||m.settings!==settings||m.componentEntry!==path.join(SOURCE,'component.cjs'))throw guiError('RUNTIME_CONFLICT');
   // disabled 是生命周期状态，不是实例冲突；stopMetadata 已有界拒绝链接/非普通文件。
   // allowConfiguring 只豁免本次事务自己的临时标记，不能豁免其他 disabled。
   const disabledText=exists(disabled)?instanceFile(disabled,32).data.toString('utf8'):null;
@@ -560,28 +803,60 @@ function checkGuiRuntime(paths,previous=null,allowConfiguring=false,readOnly=fal
   };
   const configText=readConfig(configPath),connectionText=readConfig(connectionPath);
   const config=JSON.parse(configText),connection=JSON.parse(connectionText);
-  if(!object(config)||!object(connection)||Object.keys(connection).some(k=>!['baseUrl','apiKey','model','models'].includes(k))||!Array.isArray(config.Providers)||config.Providers.length!==1)throw guiError('RUNTIME_CONFLICT');
-  const provider=config.Providers[0],model=connection.model;
-  if(typeof model!=='string'||!model||model!==model.trim()||model.length>200||/[,\u0000-\u001f\u007f-\u009f]/u.test(model)||typeof provider?.api_key!=='string'||provider.api_key.length>1024||/[\u0000- \u007f]/.test(provider.api_key))throw guiError('RUNTIME_CONFLICT');
-  let endpoint;try{endpoint=normalizeGuiEndpoint(provider?.api_base_url);}catch{throw guiError('RUNTIME_CONFLICT');}
-  // 仅接收原单模型格式，或 connection/Provider 完全对应的显式 ID 列表。
-  const validated=validateConfig({endpoint,apiKey:provider.api_key,model,...(Object.hasOwn(connection,'models')?{models:connection.models}:{})},instance.port);
-  const models=validated.models||[model];
-  let canonical=same(config,routerConfig(validated,instance.port,connection.apiKey));
-  if(!canonical&&disabledText==='configuring\n'){
-    // SIGKILL 可发生在两次原子 rename 之间：仅精确事务标记下允许两份各自规范、同一本地密钥的配置。
-    // 不在 GET/ensure 中写回；下一次显式保存仍在锁内停止原实例、核对身份，再完整提交两份文件。
-    const route=config.Router?.default,interruptedModel=typeof route==='string'&&route.startsWith('relay,')?route.slice(6):'';
-    if(!interruptedModel||interruptedModel!==interruptedModel.trim()||interruptedModel.length>200||/[,\u0000-\u001f\u007f-\u009f]/u.test(interruptedModel))throw guiError('RUNTIME_CONFLICT');
-    const interrupted=validateConfig({endpoint,apiKey:provider.api_key,model:interruptedModel,models:provider.models},instance.port);
-    canonical=same(config,routerConfig(interrupted,instance.port,connection.apiKey));
+  if(!object(config)||!object(connection)||Object.keys(connection).some(k=>!['baseUrl','apiKey','model','models'].includes(k))||!Array.isArray(config.Providers))throw guiError('RUNTIME_CONFLICT');
+  if(typeof connection.baseUrl!=='string'||connection.baseUrl!==options.endpoint||typeof connection.apiKey!=='string'||!/^[0-9a-f]{48}$/.test(connection.apiKey))throw guiError('RUNTIME_CONFLICT');
+  const model=connection.model;
+  if(typeof model!=='string'||!model||model!==model.trim()||model.length>200||/[,\u0000-\u001f\u007f-\u009f]/u.test(model))throw guiError('RUNTIME_CONFLICT');
+  const multi=object(config.MODEL_ROUTES)&&!Array.isArray(config.MODEL_ROUTES);
+  let validated,endpoint,models,split=false;
+  if(multi){
+    if(!config.Providers.length||config.Providers.length>MAX_PROVIDERS)throw guiError('RUNTIME_CONFLICT');
+    let connections;
+    try{
+      connections=config.Providers.map((provider,index)=>{
+        if(!object(provider)||typeof provider.name!=='string'||typeof provider.api_base_url!=='string'||typeof provider.api_key!=='string'||provider.api_key.length>1024||/[\u0000- \u007f]/.test(provider.api_key)||!Array.isArray(provider.models)||!provider.models.length)throw 0;
+        return providerConfig({name:provider.name,endpoint:provider.api_base_url,apiKey:provider.api_key,model:provider.models[0],models:provider.models},index,true);
+      });
+      if(Array.isArray(connection.models))validated=validateInternal({endpoint:connections[0].endpoint,apiKey:connections[0].apiKey,model,models:modelIds(connection.models,model),connections,routes:config.MODEL_ROUTES,explicitModels:true});
+    }catch{validated=undefined;}
+    let canonical=!!validated&&same(config,routerConfig(validated,instance.port,connection.apiKey));
+    if(!canonical&&disabledText==='configuring\n'){
+      const interrupted=interruptedConfig(config,connection,instance.port);
+      if(interrupted){validated=interrupted;canonical=true;split=true;}
+    }
+    if(!validated||!canonical)throw guiError('RUNTIME_CONFLICT');
+    for(const provider of validated.connections){
+      let normalized;try{normalized=normalizeGuiEndpoint(provider.endpoint);}catch{throw guiError('RUNTIME_CONFLICT');}
+      if(normalized!==provider.endpoint)throw guiError('RUNTIME_CONFLICT');
+    }
+    endpoint=validated.endpoint;models=split?(Object.hasOwn(connection,'models')?modelIds(connection.models,model):[model]):validated.models;
+  }else{
+    if(config.Providers.length!==1||Object.hasOwn(config,'MODEL_ROUTES'))throw guiError('RUNTIME_CONFLICT');
+    const provider=config.Providers[0];
+    if(typeof provider?.api_key!=='string'||provider.api_key.length>1024||/[\u0000- \u007f]/.test(provider.api_key))throw guiError('RUNTIME_CONFLICT');
+    try{endpoint=normalizeGuiEndpoint(provider?.api_base_url);}catch{throw guiError('RUNTIME_CONFLICT');}
+    // 仅接收原单模型格式，或 connection/Provider 完全对应的显式 ID 列表。
+    try{validated=validateConfig({endpoint,apiKey:provider.api_key,model,...(Object.hasOwn(connection,'models')?{models:connection.models}:{})},instance.port);}catch{}
+    models=Object.hasOwn(connection,'models')?modelIds(connection.models,model):[model];
+    let canonical=!!validated&&same(config,routerConfig(validated,instance.port,connection.apiKey));
+    if(!canonical&&disabledText==='configuring\n'){
+      // SIGKILL 可发生在两次原子 rename 之间：仅精确事务标记下允许两份各自规范、同一本地密钥的配置。
+      // 不在 GET/ensure 中写回；下一次显式保存仍在锁内停止原实例、核对身份，再完整提交两份文件。
+      const route=config.Router?.default,interruptedModel=typeof route==='string'&&route.startsWith('relay,')?route.slice(6):'';
+      if(!interruptedModel||interruptedModel!==interruptedModel.trim()||interruptedModel.length>200||/[,\u0000-\u001f\u007f-\u009f]/u.test(interruptedModel))throw guiError('RUNTIME_CONFLICT');
+      const interrupted=validateConfig({endpoint,apiKey:provider.api_key,model:interruptedModel,models:provider.models},instance.port);
+      canonical=same(config,routerConfig(interrupted,instance.port,connection.apiKey));
+      if(canonical){validated=interrupted;split=true;}
+    }
+    if(!validated||endpoint!==provider.api_base_url||!split&&validated.models&&!same(connection.models,validated.models)||!canonical)throw guiError('RUNTIME_CONFLICT');
   }
-  if(endpoint!==provider.api_base_url||connection.baseUrl!==options.endpoint||typeof connection.apiKey!=='string'||!/^[0-9a-f]{48}$/.test(connection.apiKey)||validated.models&&!same(connection.models,validated.models)||!canonical)throw guiError('RUNTIME_CONFLICT');
   if(previous&&(previous.configText!==configText||previous.connectionText!==connectionText))throw guiError('RUNTIME_CONFLICT');
   // 在任何配置副作用前拒绝坏故障标记（FIFO/链接/硬链接/越界），原因只投影为固定码。
   const fault=path.join(instance.runtime.state,'recovery.failed');
   const recoveryReason=exists(fault)?instanceFile(fault,4096).data.toString('utf8'):null;
-  return {instance,options,configPath,connectionPath,configText,connectionText,endpoint,model,models,explicitModels:Object.hasOwn(connection,'models'),apiKey:validated.apiKey,localKey:connection.apiKey,disabledText,componentDisabled,recoveryReason,stale:!!stale?.some(name=>RUNTIME_FILES.includes(name))};   // 只差 manage.cjs 时桥照常跑、探测脚本已核对，不算过期
+  const connections=validated.connections||configConnections(validated);
+  const routes=validated.routes||configRoutes(validated).routes;
+  return {instance,options,configPath,connectionPath,configText,connectionText,endpoint,model,models,connections,routes,split,explicitModels:multi?true:Object.hasOwn(connection,'models'),apiKey:validated.apiKey,localKey:connection.apiKey,disabledText,componentDisabled,recoveryReason,stale:!!stale?.some(name=>RUNTIME_FILES.includes(name))};   // 只差 manage.cjs 时桥照常跑、探测脚本已核对，不算过期
 }
 async function guiLocalReady(target,port){
   // 不再读取可变 connection.baseUrl；只探测已验证端口的字面量回环 /health。
@@ -608,11 +883,12 @@ function guiLocalBlock(current){
   return null;
 }
 function guiProjection(current,localReady,localError,save=false){
-  return {schema:1,id:'openai-bridge',configured:true,endpoint:current.endpoint,model:current.model,models:current.models,hasKey:true,localReady,...(save?{connectionPath:current.connectionPath}:{}),...(!localReady?{localError:localError||'LOCAL_START_FAILED'}:{})};
+  return {schema:1,id:'openai-bridge',capabilities:{multiUpstream:true},configured:true,endpoint:current.endpoint,model:current.model,models:current.models,
+    ...(!current.split?{upstreams:upstreamProjection(current)}:{}),hasKey:true,localReady,...(save?{connectionPath:current.connectionPath}:{}),...(!localReady?{localError:localError||'LOCAL_START_FAILED'}:{})};
 }
 async function guiStatus(){
   const paths=guiPaths();
-  const empty={schema:1,id:'openai-bridge',configured:false,endpoint:'',model:'',models:[],hasKey:false,localReady:false};
+  const empty={schema:1,id:'openai-bridge',capabilities:{multiUpstream:true},configured:false,endpoint:'',model:'',models:[],hasKey:false,localReady:false};
   if(guiRetired(paths))return empty;
   const current=checkGuiRuntime(paths,null,false,true);
   if(!current)return empty;
@@ -632,16 +908,24 @@ function guiLock(paths,fn){
   }
   return withInstanceLock({home:paths.home},fn);
 }
-async function guiConfigure(input){
+async function guiConfigure(input,managedPaths=null,expected=null){
   // 卸载留下的旧目录按全新安装处理：要重新填 Key，旧目录改名备份
-  const paths=guiPaths(),retired=guiRetired(paths),current=retired?null:checkGuiRuntime(paths);
-  let key=input.apiKey;
-  if(!key){
-    if(!current)throw guiError('KEY_REQUIRED');
-    if(new URL(input.endpoint).origin!==new URL(current.endpoint).origin)throw guiError('KEY_HOST_CHANGED');
-    key=current.apiKey;
+  const paths=managedPaths||guiPaths(),retired=!paths.cli&&guiRetired(paths),current=retired?null:checkGuiRuntime(paths);
+  if(expected&&(!current||expected.configText!==current.configText||expected.connectionText!==current.connectionText||!same(expected.instance.manifest,current.instance.manifest)))throw guiError('RUNTIME_CONFLICT');
+  let config;
+  if(input.upstreams)config=replacementConfig(input,current);
+  else{
+    let key=input.apiKey;
+    if(!key){
+      if(!current)throw guiError('KEY_REQUIRED');
+      if(new URL(input.endpoint).origin!==new URL(current.endpoint).origin)throw guiError('KEY_HOST_CHANGED');
+      key=current.apiKey;
+    }
+    try{config=current?mergeGuiConfig(current,input,key):validateConfig({...input,apiKey:key},3459);}catch{throw guiError('INVALID_INPUT');}
   }
-  let config;try{config=validateConfig({...input,apiKey:key},current?.instance.port||3459);}catch{throw guiError('INVALID_INPUT');}
+  const shape=Array.isArray(config.connections)?configShape(config):config;
+  boundedConfig(shape,current?.instance.port||3459,current?.localKey||'0'.repeat(48));
+  config=shape;
   return await guiLock(paths,async checkLock=>{
     const recheck=previous=>{checkLock();guiPaths();return checkGuiRuntime(paths,previous);};
     if(retired)guiSetAside(paths,checkLock);
@@ -654,50 +938,52 @@ async function guiConfigure(input){
           checkLock();if(registration.read(paths.home))throw guiError('RUNTIME_CONFLICT');
           atomic(registration.fileOf(paths.home),JSON.stringify(registration.value(target,port,service.instanceId),null,2)+'\n');
         }});
-    }else if(current.disabledText==='configuring\n'||current.endpoint!==config.endpoint||current.model!==config.model||!same(current.models,config.models||[config.model])||current.explicitModels!==Object.hasOwn(config,'models')||current.apiKey!==config.apiKey){
-      readSettings(paths.settings,true);
+    }else{
       const nextConfigText=JSON.stringify(routerConfig(config,current.instance.port,current.localKey),null,2)+'\n';
       const nextConnectionText=JSON.stringify(connectionConfig(config,current.options.endpoint,current.localKey),null,2)+'\n';
-      const disabledPath=path.join(paths.target,'disabled'),hadDisabled=current.disabledText!==null&&current.disabledText!=='configuring\n';
-      const inheritedTemporary=current.disabledText==='configuring\n';
-      const beforeDisable=()=>{const now=recheck(current);if(now.disabledText!==current.disabledText)throw guiError('RUNTIME_CONFLICT');};
-      beforeDisable();if(!hadDisabled&&!inheritedTemporary)instanceAtomic(disabledPath,'configuring\n',beforeDisable);
-      const transactionRecheck=previous=>{
-        checkLock();const now=checkGuiRuntime(paths,previous,true);
-        if(now.disabledText!==(hadDisabled?current.disabledText:'configuring\n'))throw guiError('RUNTIME_CONFLICT');
-        return now;
-      };
-      const clearTemporary=()=>{
-        checkLock();checkInstance(paths.target,current.options,current.instance);
-        if(!hadDisabled){
-          if(instanceFile(disabledPath,32).data.toString('utf8')!=='configuring\n')throw guiError('RUNTIME_CONFLICT');
-          fs.unlinkSync(disabledPath);
-        }
-      };
-      // 只有精确 configuring 是未完成事务：显式保存可重做并在成功后清除；其他停用标记保留。
-      // disabled 阻止本安装 Hook/看护重启；只停止已核对的同一服务实例。
-      try{
-        transactionRecheck(current);stopManaged(paths.target);
-        transactionRecheck(current);
-        // 配置保存绝不删除故障锁或恢复预算；新看护对明确 disabled 退出而不制造故障锁。
-        atomic(current.configPath,nextConfigText);
-        checkLock();checkInstance(paths.target,current.options,current.instance);
-        atomic(current.connectionPath,nextConnectionText);
-        // 允许读取崩溃残留不代表本次已提交；删标记前必须是本次精确、成对的目标文本。
-        const committed=transactionRecheck(null);
-        if(committed.configText!==nextConfigText||committed.connectionText!==nextConnectionText)throw guiError('RUNTIME_CONFLICT');
-        clearTemporary();
-      }catch(error){
-        // 只回滚仍属于同一实例的本次写入；身份变化时保留 tombstone，绝不追着新实例写。
-        try{
+      if(current.disabledText==='configuring\n'||current.configText!==nextConfigText||current.connectionText!==nextConnectionText){
+        readSettings(paths.settings,true);
+        const disabledPath=path.join(paths.target,'disabled'),hadDisabled=current.disabledText!==null&&current.disabledText!=='configuring\n';
+        const inheritedTemporary=current.disabledText==='configuring\n';
+        const beforeDisable=()=>{const now=recheck(current);if(now.disabledText!==current.disabledText)throw guiError('RUNTIME_CONFLICT');};
+        beforeDisable();if(!hadDisabled&&!inheritedTemporary)instanceAtomic(disabledPath,'configuring\n',beforeDisable);
+        const transactionRecheck=previous=>{
+          checkLock();const now=checkGuiRuntime(paths,previous,true);
+          if(now.disabledText!==(hadDisabled?current.disabledText:'configuring\n'))throw guiError('RUNTIME_CONFLICT');
+          return now;
+        };
+        const clearTemporary=()=>{
           checkLock();checkInstance(paths.target,current.options,current.instance);
-          regularFile(current.configPath);regularFile(current.connectionPath);
-          const actualConfig=fs.readFileSync(current.configPath,'utf8'),actualConnection=fs.readFileSync(current.connectionPath,'utf8');
-          if(![current.configText,nextConfigText].includes(actualConfig)||![current.connectionText,nextConnectionText].includes(actualConnection))throw guiError('RUNTIME_CONFLICT');
-          atomic(current.configPath,current.configText);atomic(current.connectionPath,current.connectionText);
-          transactionRecheck(current);if(!inheritedTemporary)clearTemporary();
-        }catch{}
-        throw error;
+          if(!hadDisabled){
+            if(instanceFile(disabledPath,32).data.toString('utf8')!=='configuring\n')throw guiError('RUNTIME_CONFLICT');
+            fs.unlinkSync(disabledPath);
+          }
+        };
+        // 只有精确 configuring 是未完成事务：显式保存可重做并在成功后清除；其他停用标记保留。
+        // disabled 阻止本安装 Hook/看护重启；只停止已核对的同一服务实例。
+        try{
+          transactionRecheck(current);stopManaged(paths.target);
+          transactionRecheck(current);
+          // 配置保存绝不删除故障锁或恢复预算；新看护对明确 disabled 退出而不制造故障锁。
+          atomic(current.configPath,nextConfigText);
+          checkLock();checkInstance(paths.target,current.options,current.instance);
+          atomic(current.connectionPath,nextConnectionText);
+          // 允许读取崩溃残留不代表本次已提交；删标记前必须是本次精确、成对的目标文本。
+          const committed=transactionRecheck(null);
+          if(committed.configText!==nextConfigText||committed.connectionText!==nextConnectionText)throw guiError('RUNTIME_CONFLICT');
+          clearTemporary();
+        }catch(error){
+          // 只回滚仍属于同一实例的本次写入；身份变化时保留 tombstone，绝不追着新实例写。
+          try{
+            checkLock();checkInstance(paths.target,current.options,current.instance);
+            regularFile(current.configPath);regularFile(current.connectionPath);
+            const actualConfig=fs.readFileSync(current.configPath,'utf8'),actualConnection=fs.readFileSync(current.connectionPath,'utf8');
+            if(![current.configText,nextConfigText].includes(actualConfig)||![current.connectionText,nextConnectionText].includes(actualConnection))throw guiError('RUNTIME_CONFLICT');
+            atomic(current.configPath,current.configText);atomic(current.connectionPath,current.connectionText);
+            transactionRecheck(current);if(!inheritedTemporary)clearTemporary();
+          }catch{}
+          throw error;
+        }
       }
     }
     let configured=recheck(null),localReady=false,localError=guiLocalBlock(configured);
@@ -716,12 +1002,15 @@ async function guiConfigure(input){
 async function guiModels(input){
   // 读取清单不保存配置、不探测/启动本地桥。只有未输入新 Key 时才读取已验证的 GUI 私有配置。
   try{
-    return await require('./gui-models.cjs').listModels(input,{resolveSavedKey(endpoint){
+    const {provider,...request}=input;
+    return await require('./gui-models.cjs').listModels(request,{resolveSavedKey(endpoint){
       const paths=guiPaths(),current=guiRetired(paths)?null:checkGuiRuntime(paths,null,false,true);
       if(!current)throw guiError('KEY_REQUIRED');
-      if(new URL(endpoint).origin!==new URL(current.endpoint).origin)throw guiError('KEY_HOST_CHANGED');
+      const upstream=provider===undefined?current.connections[0]:current.connections.find(connection=>connection.name===provider);
+      if(!upstream)throw guiError('KEY_REQUIRED');
+      if(new URL(endpoint).origin!==new URL(upstream.endpoint).origin)throw guiError('KEY_HOST_CHANGED');
       checkGuiRuntime(paths,current,false,true);
-      return current.apiKey;
+      return upstream.apiKey;
     }});
   }finally{input.apiKey='';}
 }
@@ -771,9 +1060,11 @@ async function gui(command,args){
   try{
     if(args.length)throw guiError('INVALID_INPUT');
     const input=command==='gui-status'?null:await guiInput(command);
-    if(command==='gui-configure')guiUpgrade();
-    const result=command==='gui-models'?await guiModels(input):command==='gui-configure'?await guiConfigure(input):await guiStatus();
-    console.log(JSON.stringify(result));
+    try{
+      if(command==='gui-configure')guiUpgrade();
+      const result=command==='gui-models'?await guiModels(input):command==='gui-configure'?await guiConfigure(input):await guiStatus();
+      console.log(JSON.stringify(result));
+    }finally{if(input){input.apiKey='';for(const upstream of input.upstreams||[])upstream.apiKey='';}}
   }catch(error){
     const requested=error.guiCode||(error.message?.includes('正在使用')?'BUSY':'RUNTIME_CONFLICT');
     const code=Object.hasOwn(GUI_MESSAGES,requested)?requested:'RUNTIME_CONFLICT';
@@ -1097,6 +1388,58 @@ async function manage(command,options) {
     console.log('已删除整个专用安装目录（含依赖、密钥、配置和日志）：'+target);
   }else console.log('安装目录和密钥保留：'+target+'；如需永久删除，确认备份后使用 uninstall --yes --purge。');
 }
+async function providerCommand(command,options){
+  if(Object.keys(options).some(key=>!['yes','config','provider'].includes(key)))throw new Error('上游管理只接受 --config、--provider 和 --yes；不允许更换实例路径。');
+  if(!options.yes)throw new Error('更改上游会停止并重启本桥；请确认没有请求运行，再带 --yes。');
+  const paths={...guiPaths(),cli:true};
+  const manifest=loadManifest(paths.target),instance={endpoint:'http://127.0.0.1:'+instancePort(paths.target),instance:manifest.service?.instanceId};
+  instanceOptions('ensure',instance);upgradeInstance(paths.target,instance,true);
+  const current=checkGuiRuntime(paths);
+  if(!current||current.split)throw new Error('请先完成未结束的配置事务。');
+  let incoming;
+  if(command!=='remove-provider'){
+    if(!options.config)throw new Error('新增或编辑上游需要 --config 指向0600私有JSON；密钥不能放进参数。');
+    const file=path.resolve(options.config),actual=instanceFile(file,128*1024);
+    if(actual.stat.mode&0o077)throw new Error('含密钥配置必须是0600私有文件。');
+    const value=JSON.parse(actual.data.toString('utf8'));
+    if(!object(value)||Object.keys(value).some(key=>!['name','endpoint','apiKey','model','models'].includes(key)))throw new Error('上游JSON只接受 name、endpoint、apiKey、model、models。');
+    const model=upstreamModel(value.model),models=value.models===undefined?[model]:modelIds(value.models,model);
+    incoming={name:value.name,endpoint:normalizeGuiEndpoint(value.endpoint),apiKey:guiKey(value.apiKey),models};
+  }else if(options.config)throw new Error('移除上游不接受 --config。');
+  const upstreams=upstreamProjection(current).map(upstream=>({name:upstream.name,endpoint:upstream.endpoint,apiKey:'',models:upstream.models}));
+  if(command==='add-provider'){
+    if(options.provider)throw new Error('新增上游的名称填写在私有JSON中。');
+    let name=incoming.name;
+    if(name===undefined){let n=2;while(upstreams.some(upstream=>upstream.name==='relay-'+n))n++;name='relay-'+n;}
+    if(typeof name!=='string'||!PROVIDER_NAME.test(name)||upstreams.some(upstream=>upstream.name===name))throw new Error('新增上游名称无效或已存在。');
+    const used=new Set(current.models);
+    const models=incoming.models.map(model=>{const id=used.has(model)?name+'/'+model:model;if(used.has(id))throw new Error('模型别名重复，请改用不同的上游名称。');used.add(id);return {id,model};});
+    upstreams.push({name,endpoint:incoming.endpoint,apiKey:incoming.apiKey,models});
+  }else{
+    const index=upstreams.findIndex(upstream=>upstream.name===options.provider);
+    if(index<0)throw new Error('--provider 必须指定已存在的上游名称。');
+    if(command==='remove-provider'){
+      if(upstreams.length===1)throw new Error('不能移除最后一个上游。');
+      upstreams.splice(index,1);
+    }else{
+      const previous=upstreams[index];
+      if(incoming.name!==undefined&&incoming.name!==previous.name)throw new Error('编辑上游不能更改名称。');
+      const used=new Set(upstreams.filter((_,i)=>i!==index).flatMap(upstream=>upstream.models.map(item=>item.id)));
+      const models=incoming.models.map(model=>{
+        const known=previous.models.find(item=>(item.model||item.id)===model);
+        const id=known?.id||(used.has(model)?previous.name+'/'+model:model);
+        if(used.has(id))throw new Error('模型别名重复。');used.add(id);return {id,model};
+      });
+      upstreams[index]={name:previous.name,endpoint:incoming.endpoint,apiKey:incoming.apiKey,models};
+    }
+  }
+  const ids=upstreams.flatMap(upstream=>upstream.models.map(item=>item.id)),model=ids.includes(current.model)?current.model:ids[0];
+  try{
+    const result=await guiConfigure({endpoint:upstreams[0].endpoint,apiKey:'',model,models:ids,upstreams:guiUpstreams(upstreams)},paths,current);
+    console.log(JSON.stringify(result));
+    console.log('上游配置已保存；App 中请重新打开配置页，同步模型清单后再新建会话。');
+  }finally{for(const upstream of upstreams)upstream.apiKey='';if(incoming)incoming.apiKey='';}
+}
 function parse(argv) {
   const out={};
   for(let i=0;i<argv.length;i++){
@@ -1105,7 +1448,7 @@ function parse(argv) {
     const name=key.slice(2);
     if(Object.hasOwn(out,name))throw new Error('参数不能重复：'+key);
     if(['yes','start','show-key','help','purge','reset-recovery'].includes(name)){out[name]=true;continue;}
-    if(!['dir','settings','config','port','bundled-runtime','endpoint','instance'].includes(name)||!argv[i+1]||argv[i+1].startsWith('--'))throw new Error('未知或缺值的参数：'+key);
+    if(!['dir','settings','config','port','bundled-runtime','endpoint','instance','provider'].includes(name)||!argv[i+1]||argv[i+1].startsWith('--'))throw new Error('未知或缺值的参数：'+key);
     out[name]=argv[++i];
   }
   return out;
@@ -1116,6 +1459,8 @@ async function main() {
   if(['gui-status','gui-configure','gui-models'].includes(cmd)){await gui(cmd,argv);return;}
   const options=parse(argv);
   if(options.help){console.log('用法：bash install.sh [--config 私有JSON] [--port 端口] [--dir 安装目录] [--settings 设置路径] [--yes] [--start]\n管理：node manage.cjs status|start|stop|uninstall|connection --dir 安装目录 [--yes] [--show-key] [--purge（仅卸载，永久删除专用目录）]');return;}
+  if(['add-provider','edit-provider','remove-provider'].includes(cmd)){await providerCommand(cmd,options);return;}
+  if(options.provider)throw new Error('--provider 只适用于编辑或移除上游。');
   if(!COMMANDS.has(cmd))throw new Error('未知操作：'+cmd);
   if(options.purge&&cmd!=='uninstall')throw new Error('--purge 只适用于 uninstall。');
   if(options['reset-recovery']&&cmd!=='start')throw new Error('--reset-recovery 只适用于 start。');
@@ -1123,4 +1468,4 @@ async function main() {
   if(cmd==='install')await install(options);else await manage(cmd,options);
 }
 if(require.main===module)main().catch(e=>{console.error('错误：'+e.message);process.exitCode=1;});
-module.exports={atomic,mergeHook,removeHook,validateConfig,routerConfig,readSettings,safeTarget,hookEntry,legacyHookEntry,parse,quote,copyBundledRuntime,purgeTarget,instanceOptions,trustedHome};
+module.exports={atomic,mergeHook,removeHook,validateConfig,routerConfig,connectionConfig,readSettings,safeTarget,hookEntry,legacyHookEntry,parse,quote,copyBundledRuntime,purgeTarget,instanceOptions,trustedHome};

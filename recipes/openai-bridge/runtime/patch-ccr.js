@@ -393,34 +393,63 @@ const REASON_NEW = `, (() => {
 }`;
 
 // 12) CCR 1.0.73 仅识别 provider,model，普通 ID 会被 think/longContext/default 覆盖。
-//     本组件明确登记的 relay ID 优先；未知 ID 和旧 Claude 别名仍走原路由。
+//     v2 支持多上游：显式 provider,model 原样交给 CCR；裸 ID 先查 MODEL_ROUTES，
+//     再在恰好只有一个可用上游声明该 ID 时自动路由；其余仍走原路由。
 const MODEL_ROUTE_OLD = `  const Router = projectSpecificRouter || config.Router;
   if (req.body.model.includes(",")) {`;
-const MODEL_ROUTE_NEW = `  const Router = projectSpecificRouter || config.Router;
+const MODEL_ROUTE_MARK = "// ccr-relay-model-route-v2:";
+const MODEL_ROUTE_V1_MARK = "// ccr-relay-model-route-v1:";
+const MODEL_ROUTE_V1 = `  const Router = projectSpecificRouter || config.Router;
   // ccr-relay-model-route-v1: preserve an explicitly configured model ID
   const bridgeProvider = config.Providers?.find((p) => p.name === "relay");
   if (typeof req.body.model === "string" && bridgeProvider?.models?.includes(req.body.model)) {
     return "relay," + req.body.model;
   }
   if (req.body.model.includes(",")) {`;
+const MODEL_ROUTE_NEW = `  const Router = projectSpecificRouter || config.Router;
+  // ccr-relay-model-route-v2: explicit provider,model wins; bare IDs use MODEL_ROUTES or one usable provider
+  const bridgeProviders = (Array.isArray(config.Providers) ? config.Providers : Array.isArray(config.providers) ? config.providers : []).filter((p) => p && typeof p.name === "string" && p.name && p.api_base_url && p.api_key && Array.isArray(p.models));
+  const bridgeRoutes = config.MODEL_ROUTES && typeof config.MODEL_ROUTES === "object" && !Array.isArray(config.MODEL_ROUTES) ? config.MODEL_ROUTES : {};
+  const bridgeModel = req.body.model;
+  if (typeof bridgeModel === "string" && !bridgeModel.includes(",")) {
+    const bridgePick = (providerName, modelName) => {
+      const folded = bridgeProviders.filter((p) => p.name.toLowerCase() === providerName.toLowerCase());
+      const provider = bridgeProviders.find((p) => p.name === providerName) || (folded.length === 1 ? folded[0] : void 0);
+      if (!provider) return void 0;
+      const foldedModels = provider.models.filter((m) => typeof m === "string" && m.toLowerCase() === modelName.toLowerCase());
+      const model = provider.models.includes(modelName) ? modelName : foldedModels.length === 1 ? foldedModels[0] : void 0;
+      return model === void 0 ? void 0 : provider.name + "," + model;
+    };
+    if (Object.hasOwn(bridgeRoutes, bridgeModel)) {
+      const mapped = bridgeRoutes[bridgeModel];
+      if (typeof mapped === "string" && mapped.includes(",")) {
+        const comma = mapped.indexOf(",");
+        const route = bridgePick(mapped.slice(0, comma).trim(), mapped.slice(comma + 1).trim());
+        if (route) return route;
+      }
+    }
+    const declaring = bridgeProviders.filter((p) => p.models.includes(bridgeModel));
+    if (declaring.length === 1) return declaring[0].name + "," + bridgeModel;
+  }
+  if (req.body.model.includes(",")) {`;
 
 // 14) Gemini 3 的 OpenAI 兼容接口要求把工具调用的 thought signature 原样带回，缺了就 400
 //     （cccodroid #91）。签名在 tool_calls[].extra_content.google.thought_signature；
 //     Claude Code 的历史里没有这个字段，桥按 tool_call id 记在进程内（有界，桥重启即清）。
-//     回填只给同一上游模型；目标是 Gemini 但拿不到签名（桥重启过、换过模型）时，
+//     回填只给同一上游的同一模型；目标是 Gemini 但拿不到签名（桥重启过、换过模型）时，
 //     按 Google 文档给该步第一个调用填 skip_thought_signature_validator，不再整轮 400。
-//     假设：本组件只注册一个 relay 上游，模型名即上游身份；将来若多上游同名，需改按 (provider, model) 记。
+//     多上游同名模型按 (provider, model) 区分，避免把 A 家的签名回填给 B 家。
 //     缺 index 的分片按 CCR 原有累积规则归到 0 号调用，签名与参数同一规则。
-const SIG_MARK = "// ccr-thought-signature-v1";
+const SIG_MARK = "// ccr-thought-signature-v2";
 const SIG_EDITS = [
   [`    let bad = (message) => nt("Provider error: " + message, e.ok ? 502 : e.status, "provider_error");`,
    `    let bad = (message) => nt("Provider error: " + message, e.ok ? 502 : e.status, "provider_error");
-    // ccr-thought-signature-v1: remember tool-call signatures by id
+    // ccr-thought-signature-v2: remember tool-call signatures by provider and model
     let remember = (id, signature) => {
       if (typeof id !== "string" || !id || typeof signature !== "string" || !signature || signature.length > 65536) return;
       let sigs = globalThis.__ccrThoughtSigs || (globalThis.__ccrThoughtSigs = new Map());
       sigs.delete(id);
-      sigs.set(id, { model: t?.req?.__ccrUpstreamModel, signature });
+      sigs.set(id, { model: t?.req?.__ccrUpstreamModel, provider: t?.req?.__ccrUpstreamProvider, signature });
       while (sigs.size > 1024) sigs.delete(sigs.keys().next().value);
     };`],
   [`                    tool.arguments += part.function.arguments || "";`,
@@ -437,10 +466,14 @@ const SIG_EDITS = [
       for (let tool of value.choices[0].message.tool_calls || []) remember(tool.id, tool.extra_content?.google?.thought_signature);
       let message = this.convertOpenAIResponseToAnthropic(value, t);`],
   [`  let u, f = AbortSignal.timeout(t.TIMEOUT ?? 60 * 1e3 * 60);`,
-   `  // ccr-thought-signature-v1: return remembered signatures to the same upstream model
+   `  // ccr-thought-signature-v2: return remembered signatures only to the same upstream provider and model
   e = ((body) => {
     let model = body?.model, gemini = typeof model == "string" && /gemini/i.test(model), sigs = globalThis.__ccrThoughtSigs;
-    if (o?.req) o.req.__ccrUpstreamModel = model;
+    if (o?.req) {
+      o.req.__ccrUpstreamModel = model;
+      o.req.__ccrUpstreamProvider = typeof o.req.provider === "string" ? o.req.provider : undefined;
+    }
+    let provider = o?.req?.__ccrUpstreamProvider;
     if (!body || !Array.isArray(body.messages) || !gemini && !sigs?.size) return body;
     let has = (call) => typeof call?.extra_content?.google?.thought_signature === "string";
     let sign = (call, signature) => ({ ...call, extra_content: { ...call.extra_content, google: { ...call.extra_content?.google, thought_signature: signature } } });
@@ -448,7 +481,7 @@ const SIG_EDITS = [
       if (m?.role !== "assistant" || !Array.isArray(m.tool_calls) || !m.tool_calls.length) return m;
       let calls = m.tool_calls.map((call) => {
         let saved = !has(call) && typeof call?.id === "string" && sigs?.get(call.id);
-        return saved && saved.model === model ? sign(call, saved.signature) : call;
+        return saved && saved.model === model && (saved.provider === undefined || provider === undefined || saved.provider === provider) ? sign(call, saved.signature) : call;
       });
       if (gemini && !calls.some(has) && calls[0] !== null && typeof calls[0] === "object") calls[0] = sign(calls[0], "skip_thought_signature_validator");
       if (calls.every((call, i) => call === m.tool_calls[i])) return m;
@@ -458,6 +491,45 @@ const SIG_EDITS = [
     return changed ? { ...body, messages } : body;
   })(e);
   let u, f = AbortSignal.timeout(t.TIMEOUT ?? 60 * 1e3 * 60);`]
+];
+// v1 已写入旧安装时原始锚点不存在；只把三处插入片段精确升级为按 provider+model 区分。
+const SIG_V1_FRAGMENTS = [
+  [`      sigs.set(id, { model: t?.req?.__ccrUpstreamModel, signature });`,
+   `      sigs.set(id, { model: t?.req?.__ccrUpstreamModel, provider: t?.req?.__ccrUpstreamProvider, signature });`],
+  [`    let model = body?.model, gemini = typeof model == "string" && /gemini/i.test(model), sigs = globalThis.__ccrThoughtSigs;
+    if (o?.req) o.req.__ccrUpstreamModel = model;`,
+   `    let model = body?.model, gemini = typeof model == "string" && /gemini/i.test(model), sigs = globalThis.__ccrThoughtSigs;
+    if (o?.req) {
+      o.req.__ccrUpstreamModel = model;
+      o.req.__ccrUpstreamProvider = typeof o.req.provider === "string" ? o.req.provider : undefined;
+    }
+    let provider = o?.req?.__ccrUpstreamProvider;`],
+  [`        return saved && saved.model === model ? sign(call, saved.signature) : call;`,
+   `        return saved && saved.model === model && (saved.provider === undefined || provider === undefined || saved.provider === provider) ? sign(call, saved.signature) : call;`]
+];
+
+// 15) tool_call id 并不跨会话唯一；缓存必须同时绑定会话、上游、模型。
+//     缺少可信请求作用域时不缓存/复用，Gemini 仍走原有占位回退。
+const SIG_SCOPE_MARK = "// ccr-thought-signature-scope-v3";
+const SIG_SCOPE_EDITS = [
+  [`      let sigs = globalThis.__ccrThoughtSigs || (globalThis.__ccrThoughtSigs = new Map());
+      sigs.delete(id);
+      sigs.set(id, { model: t?.req?.__ccrUpstreamModel, provider: t?.req?.__ccrUpstreamProvider, signature });`,
+   `      // ccr-thought-signature-scope-v3: isolate concurrent conversations and upstreams
+      let scope = t?.req?.__ccrSignatureScope;
+      if (!scope || id.length > 1024) return;
+      let key = JSON.stringify([scope, id]);
+      let sigs = globalThis.__ccrThoughtSigs || (globalThis.__ccrThoughtSigs = new Map());
+      sigs.delete(key);
+      sigs.set(key, { model: t?.req?.__ccrUpstreamModel, provider: t?.req?.__ccrUpstreamProvider, signature });`],
+  [`    let provider = o?.req?.__ccrUpstreamProvider;`,
+   `    let provider = o?.req?.__ccrUpstreamProvider, session = o?.req?.sessionId;
+    let scope = typeof provider === "string" && provider && typeof session === "string" && session && session.length <= 256 && typeof model === "string" ? JSON.stringify([session, provider, model]) : null;
+    if (o?.req) o.req.__ccrSignatureScope = scope;`],
+  [`        let saved = !has(call) && typeof call?.id === "string" && sigs?.get(call.id);
+        return saved && saved.model === model && (saved.provider === undefined || provider === undefined || saved.provider === provider) ? sign(call, saved.signature) : call;`,
+   `        let saved = scope && !has(call) && typeof call?.id === "string" && sigs?.get(JSON.stringify([scope, call.id]));
+        return saved && saved.model === model && saved.provider === provider ? sign(call, saved.signature) : call;`]
 ];
 
 let src = fs.readFileSync(file, "utf8");
@@ -485,13 +557,39 @@ patch("explicit stream", 'stream: e.stream === true, tools:', STREAM_OLD, STREAM
 patch("JSON/SSE response", SSE_MARK, src.includes(SSE_FALLBACK) ? SSE_FALLBACK : SSE_OLD, SSE_NEW);
 patch("tool result images", "// ccr-tool-images-v1:", TOOL_IMAGES_OLD, TOOL_IMAGES_NEW);
 patch("image token estimate", "// ccr-image-token-estimate-v1", IMAGE_TOKENS_OLD, IMAGE_TOKENS_NEW);
-patch("configured model route", "// ccr-relay-model-route-v1:", MODEL_ROUTE_OLD, MODEL_ROUTE_NEW);
+// v1 已写进旧安装时原版锚点不存在，必须先整块换成 v2；否则按原版锚点打。
+if (!src.includes(MODEL_ROUTE_MARK)) {
+  if (src.includes(MODEL_ROUTE_V1_MARK)) {
+    if (src.split(MODEL_ROUTE_V1).length !== 2) missing.push("configured model route (v1 anchor missing or not unique)");
+    else { src = src.replace(MODEL_ROUTE_V1, () => MODEL_ROUTE_NEW); changed = true; }
+  } else if (src.split(MODEL_ROUTE_OLD).length > 2) missing.push("configured model route (anchor not unique)");
+  else patch("configured model route", MODEL_ROUTE_MARK, MODEL_ROUTE_OLD, MODEL_ROUTE_NEW);
+}
 
 if (!src.includes(SIG_MARK)) {
-  const bad = SIG_EDITS.filter(([oldText]) => src.split(oldText).length !== 2);
-  if (bad.length) missing.push("thought signature (" + bad.length + " anchors missing or not unique)");
+  if (src.includes("// ccr-thought-signature-v1")) {
+    const bad = SIG_V1_FRAGMENTS.filter(([oldText]) => src.split(oldText).length !== 2);
+    if (bad.length) missing.push("thought signature (v1 fragments missing or not unique)");
+    else {
+      for (const [oldText, newText] of SIG_V1_FRAGMENTS) src = src.replace(oldText, () => newText);
+      src = src.split("// ccr-thought-signature-v1").join("// ccr-thought-signature-v2");
+      changed = true;
+    }
+  } else {
+    const bad = SIG_EDITS.filter(([oldText]) => src.split(oldText).length !== 2);
+    if (bad.length) missing.push("thought signature (" + bad.length + " anchors missing or not unique)");
+    else {
+      for (const [oldText, newText] of SIG_EDITS) src = src.replace(oldText, () => newText);
+      changed = true;
+    }
+  }
+}
+
+if (!src.includes(SIG_SCOPE_MARK)) {
+  const bad = SIG_SCOPE_EDITS.filter(([oldText]) => src.split(oldText).length !== 2);
+  if (bad.length) missing.push("thought signature scope (anchors missing or not unique)");
   else {
-    for (const [oldText, newText] of SIG_EDITS) src = src.replace(oldText, () => newText);
+    for (const [oldText, newText] of SIG_SCOPE_EDITS) src = src.replace(oldText, () => newText);
     changed = true;
   }
 }
