@@ -7,7 +7,7 @@
 // 「已发布」以资产在不在为准，所以重跑 CI 是安全的；要重打就把 revision 加一。
 import fs from "node:fs";
 import path from "node:path";
-import { ROOT, REPO, APP_REPO, recipes, bases, run, asset } from "./lib.mjs";
+import { ROOT, REPO, APP_REPO, recipes, bases, run, asset, hostApiOf } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : undefined; };
@@ -29,6 +29,9 @@ for (const b of bases()) {
   console.log(`\n══ 底座 ${b.tag}（${baseSha.slice(0, 12)}，${lock.target}）`);
   for (const r of recipes()) {
     if (opt("only") && r.id !== opt("only")) continue;
+    let hostApi;
+    try { hostApi = hostApiOf(r); }
+    catch (e) { console.log(`✗ ${r.id}: ${e.message}`); failed++; continue; }
     const dk = (extra) => run("node", [path.join(DEVKIT, "devkit.mjs"), "component", "--recipe", r.dir, "--target", lock.target, "--base", lockFile, ...extra], { stdio: ["ignore", "pipe", "inherit"] });
     let version;
     try { version = /COMPONENT_VERSION=(\S+)/.exec(dk(["--dry"]))[1]; }
@@ -40,9 +43,14 @@ for (const b of bases()) {
     if (DRY) continue;
     const out = path.join(WORK, "out", r.id, baseSha.slice(0, 12));
     fs.rmSync(out, { recursive: true, force: true });
-    try { process.stdout.write(dk(["--out", out])); }
-    catch (e) { console.log(`✗ ${r.id}: 构建失败`); failed++; continue; }
-    const meta = JSON.parse(fs.readFileSync(path.join(out, `component-${r.id}.json`), "utf8"));
+    let meta;
+    try {
+      process.stdout.write(dk(["--out", out]));
+      meta = JSON.parse(fs.readFileSync(path.join(out, `component-${r.id}.json`), "utf8"));
+      // 只验证本次生成的侧车，不从配方补写。旧 devkit 丢了能力声明时必须停止，不能发布未标记的新包。
+      if (JSON.stringify(hostApiOf(meta)) !== JSON.stringify(hostApi))
+        throw new Error("构建清单的 hostApi 与配方不一致；请使用支持 hostApi 的 devkit");
+    } catch (e) { console.log(`✗ ${r.id}: 构建失败（${e.message}）`); failed++; continue; }
     const gz = path.join(out, name + ".tar.gz"), js = path.join(out, name + ".json");
     fs.renameSync(path.join(out, meta.gz.file), gz);
     fs.rmSync(path.join(out, meta.tar.file), { force: true });

@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { ROOT, REPO, APP_REPO, recipes, bases, run } from "./lib.mjs";
+import { selectAuditRecipeIds } from "./audit-selection.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : undefined; };
@@ -21,14 +22,21 @@ const TARGET = "cc.codroid", PFX = `/data/data/${TARGET}/files/`;
 const all = recipes(), byId = new Map(all.map((r) => [r.id, r]));
 
 // ── 审哪些 ──
-let ids;
-if (opt("only")) ids = opt("only").split(",");
-else if (opt("changed")) {
-  const ch = run("git", ["diff", "--name-only", `${opt("changed")}...HEAD`]).split("\n").filter(Boolean);
-  // 改了审计本身或打包工具：全审一遍，顺便验证规则没误伤已有组件
-  ids = ch.some((f) => f === "tools/audit.mjs" || f === "tools/ci-selftest.mjs" || f === "bases.json") ? all.map((r) => r.id)
-    : [...new Set(ch.map((f) => /^recipes\/([^/]+)\//.exec(f)?.[1]).filter((id) => id && byId.has(id)))];
-} else ids = all.map((r) => r.id);
+const ids = selectAuditRecipeIds(all.map((r) => r.id), {
+  only: opt("only"),
+  changedFiles: !opt("only") && opt("changed")
+    ? run("git", ["diff", "--name-only", `${opt("changed")}...HEAD`]).split("\n").filter(Boolean) : undefined,
+});
+if (!ids.length) {
+  // 无目标不取底座、不构建；保留空清单供后续 selftest 明确跳过，不能冒充已验证。
+  const text = "## 组件审计报告\n\n未选择组件目标：跳过组件构建审计及 CI selftest，不代表任何组件已验证。\n";
+  fs.mkdirSync(path.join(WORK, "audit"), { recursive: true });
+  fs.writeFileSync(path.join(WORK, "audit", "targets.json"), "[]\n");
+  if (opt("out")) fs.writeFileSync(opt("out"), text);
+  else console.log(text);
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
+  process.exit(0);
+}
 
 // ── 底座 ──
 const base = bases()[0];
@@ -342,7 +350,6 @@ for (const id of ids) {
   targets.push({ id, version: m.version, ok: !errs.length, tar: b.tar, selftest: r.selftest || "", needs: r.needs || {},
     deps: [...reqs].reverse().filter((d) => byId.has(d)).map((d) => ({ id: d, tar: tarOf(d) })) });
 }
-if (!ids.length) report.push("这次没有改动配方，没审什么。");
 fs.mkdirSync(path.join(WORK, "audit"), { recursive: true });
 fs.writeFileSync(path.join(WORK, "audit", "targets.json"), JSON.stringify(targets, null, 1));
 let text = report.join("\n");
