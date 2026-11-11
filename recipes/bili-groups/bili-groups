@@ -1,0 +1,24 @@
+#!{{PREFIX}}/bin/sh
+# B 站关注分组工具（作者 chenshi723，cccodroid 群友分享的脚本，Apache-2.0；收录时只改了数据目录等三处，见 recipe.json 的 notes）。
+# bili-groups <子命令>：login / whoami / dump / tags / tag-create / tag-assign / api 是 bili.py；
+# fetch-content / review / digest / apply 是按内容重新分组那套工作流脚本。
+L={{PREFIX}}/lib/bili-groups
+QR=/sdcard/cccodroid/bili-login-qr.png
+[ -d /sdcard/cccodroid ] || QR="$HOME/bili-login-qr.png"
+mkdir -p "$HOME/.bili-groups/data"
+case "$1" in
+  fetch-content) shift; exec {{PREFIX}}/bin/python3 "$L/fetch_content.py" "$@" ;;
+  review)        shift; exec {{PREFIX}}/bin/python3 "$L/review_view.py" "$@" ;;
+  digest)        shift; exec {{PREFIX}}/bin/python3 "$L/digest_view.py" "$@" ;;
+  apply)         shift; exec {{PREFIX}}/bin/python3 "$L/apply_changes.py" "$@" ;;
+  login)
+    shift
+    case " $* " in *" --qr-out"*) ;; *) set -- --qr-out "$QR" "$@" ;; esac
+    exec {{PREFIX}}/bin/python3 "$L/bili.py" login "$@" ;;
+  ""|-h|--help)
+    echo "用法: bili-groups login | whoami | dump | tags | tag-create 名称 | tag-assign TAGID --mids 1,2,3"
+    echo "      bili-groups fetch-content [--dyn-only] | review [起 止] | digest [起 止] | apply [--dry]"
+    echo "登录二维码默认写到 $QR；数据在 ~/.bili-groups/data，登录凭据在 ~/.bili_cookies.json（0600）"
+    exit 0 ;;
+  *) exec {{PREFIX}}/bin/python3 "$L/bili.py" "$@" ;;
+esac
