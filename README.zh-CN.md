@@ -52,6 +52,20 @@ App 里会标「未经真机验证」，装之前先看说明。
 - `openai-bridge`（预览）：把你自己有权使用的 OpenAI Chat Completions API 转成本机的 Anthropic Messages 接口，再到「设置 → 接口与型号 → 自定义接口」里填本机地址。请求会发到你配置的远端，可能收费；服务只监听本机回环地址。装好后在终端运行 `openai-bridge configure` 配置；从 App 卸载前先运行 `openai-bridge uninstall --yes`。包体约 107 MiB。源仓库：[chenshi723/cccodroid-openai-bridge](https://github.com/chenshi723/cccodroid-openai-bridge)。
 - `bilibili-mcp`（MCP）：让 Claude 读 B 站——视频信息、章节、评论、字幕、搜索、收藏夹，只读。装好后自动注册为 MCP 服务 `bilibili`（cccodroid 0.6.16 起）。字幕、搜索、收藏夹要登录：在终端运行 `bilibili-mcp setup`。上游：[XZXZZX-Ai/bilibili-mcp](https://github.com/XZXZZX-Ai/bilibili-mcp)（Apache-2.0）。
 - `bili-groups`（MCP）：让 Claude 整理 B 站关注——列分组、建分组、批量移分组。**会改你的账号数据。** 装好后自动注册为 MCP 服务 `bili-groups`（cccodroid 0.6.16 起）；在终端运行 `bili-groups login` 扫码登录。脚本作者 chenshi723，cccodroid 群友分享（Apache-2.0）。
+- `skia-video`（图像影音）：用 Skia 逐帧绘制文字、图形、图片和关键帧动画，配合底座的 ffmpeg 生成视频、在现有视频上叠加图层，或导出 PNG 静帧。约 3 MB。
+- `code-quality`（开发）：shellcheck、shfmt、ruff 三件套，`code-quality check` 默认只读，`fmt --write` 才改文件。
+- `backup`（网络）：restic 加密备份、age 文件加密、rsync 同步，`ccbackup` 包装常用流程。仓库密码文件由你自己建，包装不读内容。
+- `android-build`（开发）：Gradle 9.9.1，配合底座的 JDK 21、aapt2、d8、apksigner 在手机上构建安卓工程。Android SDK 不随包：自己下载 command-line tools 后用 `android-build setup-sdk` 解开，许可由你在终端确认。约 128 MB。
+- `speech`（AI）：sherpa-onnx 语音转文字（Whisper small）与文字转语音（MeloTTS 中英）。模型不在包里，按需下载：识别约 358 MB、朗读约 160 MB，下载前会先问你。
+- `databases`（开发）：本机 Valkey 键值库（兼容 Redis 命令），只听 127.0.0.1，`ccdb start / stop / status`。暂不含 PostgreSQL。
+- `data-tools`（开发）：miller（CSV/TSV/JSON）、xmlstarlet、xmllint。
+- `math-min`（科学计算）：qalc 计算器、PARI/GP 数论、GNU units 单位换算、gnuplot 无头作图。和 `octave` 共用 gnuplot。
+- `photo-min`（图像影音）：exiv2 照片元数据、G'MIC 滤镜、potrace 位图转矢量、zbarimg 识别条码二维码。
+- `pandas`（科学计算）：pandas 3.1 表格数据分析，自带 numpy，不依赖 `sci-python`（和它共用 numpy、libopenblas）。
+- `apk-tools`（开发）：apktool 解包与重打包、dex2jar，用来检查你自己的或已获授权的 APK。不带 jadx。
+- `ml-tflite`（AI）：TensorFlow Lite 2.21 CPU 推理，自带 numpy；模型自备。
+- `minecraft-server`（其他）：原生跑 Paper 1.21.11 服务端，Java 21 由底座提供。第一次启动会从 Mojang 官方下载原版服务端（约 54 MB）并打补丁，实测近 9 分钟；要你自己读并同意 [Minecraft EULA](https://aka.ms/MinecraftEULA)。默认只听本机，局域网联机要显式打开。
+- `qq-bot`（网络）：在手机上原生跑 Linux 版 QQ + NapCat 的 OneBot 机器人，只回复白名单里的会话，明确以 AI 身份回复。第一次 `setup` 经你同意后从腾讯官方和 NapCat 的 GitHub Release 下载，共约 307 MB、装后约 1.1 GB。**免责声明：本组件是社区作品，与腾讯、QQ、NapCat 均无关联，未获官方授权或认可；它通过非官方框架接管 QQ 客户端，可能违反腾讯的服务协议，登录的 QQ 号可能被限制、冻结或封禁，风险与损失由使用者自行承担，建议用小号。机器人的回复由 AI 生成，使用者对它发出的全部内容负责，须遵守法律法规、平台规则和群规；不得用于批量注册、养号、刷屏、营销群发或冒充真人。NapCat 限非商业使用。组件按「现状」提供，不作任何担保。**
 
 ## 怎么运作
 
