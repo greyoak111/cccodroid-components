@@ -131,6 +131,9 @@ function cmdStart() {
   }
   ensureLayout();
   const env = cleanEnv();
+  // 机器人要常驻，不算 Claude 的这一轮：去掉 cccodroid 的运行标记，否则停止这一轮或网关重启时
+  // 会被当成那一轮留下的进程清掉（同 openai-bridge 的 start-bridge.sh）
+  for (const k of ["CCAPP_RUN", "CCAPP_RUN_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"]) delete env[k];
   env.PREFIX = PREFIX;
   const child = spawn(process.execPath, [LIB_SUPERVISOR], {
     detached: true, stdio: "ignore", env, cwd: ROOT,

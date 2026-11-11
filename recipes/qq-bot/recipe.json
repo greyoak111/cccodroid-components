@@ -6,8 +6,8 @@
   "version": "3.2.34",
   "name": { "zh": "QQ 机器人（原生 NapCat）", "en": "QQ bot (native NapCat)" },
   "desc": {
-    "zh": "在手机上原生跑 Linux 版 QQ 3.2.34 + NapCat 4.18.42，不使用 proot、不需要 root：QQ 跑在虚拟 X 显示里，NapCat 注入后提供 OneBot v11 接口，附一个只应答白名单会话、明确以 AI 身份回复的桥。QQ 客户端与 NapCat 在首次运行时由用户确认后从官方来源下载（约 74 MB Debian 依赖 + 198 MB QQ + 34 MB NapCat，装后约 1.1 GB），逐个核对 SHA256；组件本身只有脚本。",
-    "en": "Runs Linux QQ 3.2.34 + NapCat 4.18.42 natively on the phone — no proot, no root. QQ runs on a virtual X display, NapCat is injected to expose OneBot v11, and a small bridge replies only in allow-listed conversations, always as an AI. The QQ client and NapCat are downloaded from their official sources on first run after the user consents (~74 MB Debian deps + 198 MB QQ + 34 MB NapCat; ~1.1 GB installed), each verified by SHA256. The component itself contains scripts only."
+    "zh": "在手机上原生跑 Linux 版 QQ 3.2.34 + NapCat 4.18.42，不使用 proot、不需要 root：QQ 跑在虚拟 X 显示里，NapCat 注入后提供 OneBot v11 接口，附一个只应答白名单会话、明确以 AI 身份回复的桥。QQ 客户端与 NapCat 在首次运行时由用户确认后从官方来源下载（约 74 MB Debian 依赖 + 198 MB QQ + 34 MB NapCat，装后约 1.1 GB），逐个核对 SHA256；组件本身只有脚本。非官方，与腾讯无关；可能违反 QQ 服务协议，登录的账号有被限制或封禁的风险，后果由使用者自负，建议用小号。",
+    "en": "Runs Linux QQ 3.2.34 + NapCat 4.18.42 natively on the phone — no proot, no root. QQ runs on a virtual X display, NapCat is injected to expose OneBot v11, and a small bridge replies only in allow-listed conversations, always as an AI. The QQ client and NapCat are downloaded from their official sources on first run after the user consents (~74 MB Debian deps + 198 MB QQ + 34 MB NapCat; ~1.1 GB installed), each verified by SHA256. The component itself contains scripts only. Unofficial and not affiliated with Tencent: it may breach QQ's terms, and the account you log in with may be restricted or banned, at your own risk. Use a spare account."
   },
   "roots": ["glibc", "nodejs", "python", "patchelf", "xorg-server-xvfb"],
   "repos": ["x11"],

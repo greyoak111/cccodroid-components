@@ -1,5 +1,20 @@
 qq-bot 组件说明 / NOTICE
 
+免责声明 / Disclaimer
+
+本组件是社区作品，与腾讯、QQ、NapCat 均无关联，未获任何官方授权或认可。它通过非官方框架
+（NapCat）接管 Linux 版 QQ 客户端，可能违反腾讯的服务协议；所登录的 QQ 号可能被限制、冻结
+或封禁，风险与损失由使用者自行承担。机器人回复由 AI 生成，使用者对其发出的全部内容负责，
+须遵守法律法规、平台规则和群规；不得用于批量注册、养号、刷屏、营销群发、冒充真人或收集
+他人信息。本组件按「现状」提供，不作任何担保，cccodroid 与组件作者不对使用后果承担责任。
+
+This is a community component, not affiliated with or endorsed by Tencent, QQ or NapCat.
+It drives the Linux QQ client through an unofficial framework (NapCat), which may breach
+Tencent's terms; the QQ account used may be restricted, frozen or banned, at the user's own
+risk. Replies are AI-generated and the user is responsible for everything the bot sends.
+Do not use it for mass registration, spam, marketing blasts, impersonating people or
+collecting others' data. Provided "as is", without warranty of any kind.
+
 本组件自身的脚本按 Apache-2.0 提供（与 cccodroid-components 仓库一致）。
 
 运行时会下载、但不随本组件再分发的东西：
