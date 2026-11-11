@@ -26,7 +26,7 @@ ccdb（$PREFIX/bin/ccdb，本组件的 Python 包装）
   ├─ valkey-cli     $PREFIX/bin/valkey-cli（本组件）
   └─ Python         底座（包装脚本，只用标准库）
 
-数据：~/.cccodroid/databases/valkey（RDB 快照）
+进程：ccdb start 起的是后台守护进程，不随这一轮对话结束或停止而退出（启动时去掉了 CCAPP_RUN 等运行标记）；App 退到后台/被系统回收时可能被杀
 进程：ccdb start 起的是后台守护进程；App 退到后台/被系统回收时可能被杀
 ```
 

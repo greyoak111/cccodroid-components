@@ -47,6 +47,18 @@ def run(cmd, env=None, capture=False, cwd=None):
     return p.returncode, (p.stdout or "")
 
 
+# 常驻服务不算 Claude 的这一轮：去掉 cccodroid 给 Claude 运行打的标记，
+# 否则停止这一轮或网关重启时会被当成那一轮留下的进程清掉（同 openai-bridge 的 start-bridge.sh）
+RUN_MARKS = ("CCAPP_RUN", "CCAPP_RUN_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+
+
+def service_env():
+    env = os.environ.copy()
+    for k in RUN_MARKS:
+        env.pop(k, None)
+    return env
+
+
 def cli(args, port=None, capture=False):
     return run([tool("valkey-cli"), "-h", "127.0.0.1", "-p", str(port or PORT), *args],
                capture=capture)
@@ -89,7 +101,7 @@ def cmd_start(_args):
            "--daemonize", "yes",
            "--pidfile", PID,
            "--logfile", LOG]
-    code, out = run(cmd, capture=True)
+    code, out = run(cmd, env=service_env(), capture=True)
     if code != 0:
         sys.stderr.write("ccdb: Valkey 启动失败（%d）：\n%s\n" % (code, out[-2000:]))
         return 1
