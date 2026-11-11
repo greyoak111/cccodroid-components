@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "databases",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "本机数据库（Valkey）",
+    "en": "Local database (Valkey)"
+  },
+  "desc": {
+    "zh": "在本机起一个只听 127.0.0.1 的 Valkey（Redis 兼容）键值库：初始化、启动、停止、看状态、跑 valkey-cli 命令，数据放在 ~/.cccodroid/databases/。当前版本只带 Valkey；PostgreSQL 因底座的 libicu 版本与仓库 postgresql 不匹配，等工具包更新后再加。",
+    "en": "Runs a local Valkey (Redis-compatible) key-value store bound to 127.0.0.1: init, start, stop, status and valkey-cli, with data under ~/.cccodroid/databases/. This version ships Valkey only; PostgreSQL is held back by the base toolkit's libicu version not matching the packaged postgresql, and will be added after a toolkit update."
+  },
+  "roots": ["valkey"],
+  "bin": ["ccdb", "valkey-server", "valkey-cli"],
+  "selftest": "ccdb selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "dev",
+  "license": "BSD-3-Clause",
+  "homepage": "https://valkey.io",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/ccdb": { "src": "bin/ccdb", "mode": "755" }
+  },
+  "notes": "Valkey 9.1.3（Termux main，1.1 MB 下载 / 4.4 MB 装后）。ccdb 是 Python 包装：init/start/stop/status/info/cli/selftest；只绑 127.0.0.1，默认端口 6380，数据在 ~/.cccodroid/databases/valkey。PostgreSQL 暂缺：底座 libicu 78.3 与仓库 postgresql 18.6 需要的 libicu 79.1 不匹配，bionic 和 glibc 两个 PostgreSQL 包都起不来（glibc 版还缺 libxml2.so.2）；等新工具包发布后加 revision。selftest 在 $TMPDIR 起临时 Valkey（随机端口），SET/GET 后停掉。"
+}
