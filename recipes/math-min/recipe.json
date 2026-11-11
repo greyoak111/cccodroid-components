@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "math-min",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "数学小工具（计算/数论/单位/作图）",
+    "en": "Math toolbox (calculate/number theory/units/plot)"
+  },
+  "desc": {
+    "zh": "四个常用的命令行数学工具：qalc 做带单位的精确计算和换算，PARI/GP 做数论与代数计算，units 做单位换算，gnuplot 无头出图（PNG/SVG）。适合手边算题、验证公式、做课程或文档里的图。",
+    "en": "Four command-line math tools: qalc for exact calculation with units, PARI/GP for number theory and algebra, units for unit conversion, and gnuplot for headless plots (PNG/SVG). Useful for quick calculations, checking formulas, and making figures for notes or documents."
+  },
+  "roots": ["qalc", "pari", "units", "gnuplot"],
+  "bin": ["qalc", "gp", "units", "gnuplot"],
+  "selftest": "math-min-selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "science",
+  "license": "GPL-2.0-or-later AND GPL-3.0-or-later AND gnuplot",
+  "homepage": "https://qalculate.github.io/",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/math-min-selftest": { "src": "bin/math-min-selftest", "mode": "755" }
+  },
+  "notes": "qalc 5.13.1 + PARI/GP 2.19.0 + GNU units 2.27 + gnuplot 6.0.6（Termux main）。gnuplot 带 cairo/gd，可无头输出 PNG/SVG，不需要 X11。selftest 验 qalc 精确计算、gp 数论、units 换算和 gnuplot 出 PNG，不联网、只写 $TMPDIR。"
+}

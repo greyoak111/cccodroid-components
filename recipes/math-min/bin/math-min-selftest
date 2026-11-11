@@ -1,0 +1,70 @@
+#!{{PREFIX}}/bin/sh
+# math-min 自检：qalc 精确计算、PARI/GP 数论、units 单位换算、gnuplot 无头出 PNG。
+# 不联网，不读用户文件，只写 $TMPDIR。
+set -eu
+
+: "${PREFIX:={{PREFIX}}}"
+: "${TMPDIR:={{PREFIX}}/tmp}"
+TMP=$(mktemp -d "$TMPDIR/math-min-selftest.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+
+fail() { echo "✗ $*" >&2; exit 1; }
+
+command -v qalc >/dev/null 2>&1 || fail "找不到 qalc"
+command -v gp >/dev/null 2>&1 || fail "找不到 gp"
+command -v units >/dev/null 2>&1 || fail "找不到 units"
+command -v gnuplot >/dev/null 2>&1 || fail "找不到 gnuplot"
+
+QV=$(qalc --version 2>/dev/null | sed -n '1p')
+PARIV=$(echo 'print(version())' | gp -q 2>/dev/null | tail -1)
+UNITSV=$(units --version 2>/dev/null | sed -n '1p')
+GNUV=$(gnuplot --version 2>/dev/null | sed -n '1p')
+case "$QV" in
+  *5.*) ;;
+  *) fail "qalc --version 输出异常：$QV" ;;
+esac
+case "$PARIV" in
+  *2,*) ;;
+  *) fail "PARI/GP 版本输出异常：$PARIV" ;;
+esac
+case "$UNITSV" in
+  *2.*) ;;
+  *) fail "units --version 输出异常：$UNITSV" ;;
+esac
+case "$GNUV" in
+  *"gnuplot 6."*) ;;
+  *) fail "gnuplot --version 输出异常：$GNUV" ;;
+esac
+
+# qalc：精确整数和带单位换算
+Q1=$(qalc -t '2^10' 2>/dev/null | tail -1)
+[ "$Q1" = "1024" ] || fail "qalc 2^10 结果异常：$Q1"
+Q2=$(qalc -t '1 m + 1 ft' 2>/dev/null | tail -1)
+case "$Q2" in
+  *1.3048*m*) ;;
+  *) fail "qalc 1 m + 1 ft 结果异常：$Q2" ;;
+esac
+
+# PARI/GP：数论与矩阵
+P1=$(echo 'print(2^10); print(isprime(101)); print(nextprime(100))' | gp -q 2>/dev/null | tr '\n' ' ')
+echo "$P1" | grep -q '^1024 1 101 ' || fail "PARI/GP 结果异常：$P1"
+echo 'print(matdet([1,2;3,4]))' | gp -q 2>/dev/null | grep -q '^-2$' || fail "PARI/GP 行列式结果异常"
+
+# units：1 mile = 1.609344 km
+U1=$(units -f "$PREFIX/share/units/definitions.units" -t '1 mile' 'km' 2>/dev/null)
+[ "$U1" = "1.609344" ] || fail "units 换算结果异常：$U1"
+
+# gnuplot：无头出 PNG，再确认文件真的是 PNG
+gnuplot -e "set terminal pngcairo size 240,160; set output '$TMP/plot.png'; set xlabel 'x'; plot x*x title 'x^2'" 2>"$TMP/gnuplot.err" || {
+  tail -20 "$TMP/gnuplot.err" >&2 || true
+  fail "gnuplot 出图失败"
+}
+[ -s "$TMP/plot.png" ] || fail "gnuplot 没有生成 PNG"
+file "$TMP/plot.png" 2>/dev/null | grep -q 'PNG image data' || fail "gnuplot 输出不是 PNG"
+
+echo "math-min selftest"
+echo "  $QV"
+echo "  PARI/GP $PARIV"
+echo "  $UNITSV"
+echo "  $GNUV"
+echo "===== 总结 ===== qalc=OK pari=OK units=OK gnuplot=OK png=PASS"
