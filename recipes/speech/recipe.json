@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "id": "speech",
+  "kind": "glibc",
+  "revision": 1,
+  "version": "1.13.8",
+  "name": {
+    "zh": "语音转写与朗读（sherpa-onnx）",
+    "en": "Speech to text and text to speech (sherpa-onnx)"
+  },
+  "desc": {
+    "zh": "用 sherpa-onnx 在本机做语音转文字和文字转语音：Whisper small 中英混合转写，可输出纯文本、SRT 字幕或 JSON；MeloTTS zh_en 把文字朗读成 WAV。模型按需下载，不随组件走。",
+    "en": "On-device speech to text and text to speech with sherpa-onnx: Whisper small transcribes mixed Chinese/English to text, SRT subtitles or JSON; MeloTTS zh_en reads text aloud to WAV. Models are downloaded on demand and are not bundled."
+  },
+  "roots": ["glibc", "gcc-libs-glibc"],
+  "bin": ["speech"],
+  "selftest": "speech selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "ai",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/k2-fsa/sherpa-onnx",
+  "maintainers": ["greyoak111"],
+  "fetch": {
+    "usr/glibc/opt/speech/": {
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-linux-aarch64-shared-cpu.tar.bz2",
+      "sha256": "4e3734f82bc1379fd91f219f5869c7e9d03b7a4f7561907d8abca4849c51a789",
+      "source": "sherpa-onnx",
+      "version": "1.13.8",
+      "why": "Termux 官方仓库没有 sherpa-onnx；这是上游发布的 Linux aarch64 glibc 预编译（shared-cpu，28,091,778 B），经底座 glibc 的 ld-linux 启动。只取转写、朗读、版本三个入口和它们的库。",
+      "extract": {
+        "format": "tar.bz2",
+        "strip": 1,
+        "include": [
+          "bin/sherpa-onnx-offline",
+          "bin/sherpa-onnx-offline-tts",
+          "bin/sherpa-onnx-version",
+          "lib/"
+        ],
+        "exec": [
+          "bin/sherpa-onnx-offline",
+          "bin/sherpa-onnx-offline-tts",
+          "bin/sherpa-onnx-version"
+        ]
+      }
+    }
+  },
+  "files": {
+    "usr/bin/speech": { "src": "bin/speech", "mode": "755" }
+  },
+  "notes": "sherpa-onnx 1.13.8（上游 Linux aarch64 shared-cpu，28 MB）。glibc 由底座提供；libstdc++.so.6 / libgcc_s.so.1 由 roots 的 gcc-libs-glibc（24 MB 下载 / 150 MB 装后）提供 —— 底座只有 glibc，没有这两个库。模型按需下载：Whisper small int8 约 358 MB，MeloTTS zh_en 约 160 MB；setup 必须加 --yes，skill 要求 Claude 先问用户。转写把音频转 16k 单声道后按 30 秒切块（Whisper 单次窗口），每块用 segment timestamps 拼 SRT。selftest 验引擎加载；有模型时会真跑 1 秒静音 ASR 和短句 TTS。2026-11-11 实测：6.6 秒英文样本转写 4.6 秒，66 秒样本 34 秒；TTS 2.45 秒音频 7.3 秒。"
+}
