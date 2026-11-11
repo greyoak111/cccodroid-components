@@ -1,0 +1,121 @@
+#!{{PREFIX}}/bin/python3
+"""ml-tflite：本机 TensorFlow Lite 运行时入口。
+
+selftest 用组件自带的 544 字节 add.bin 做一次离线推理；inspect 看任意 .tflite
+模型的输入输出张量。仓库里的 shebang 是占位符，打包时替换成真实前缀。
+"""
+
+import argparse
+import os
+import sys
+
+# 隔离模式：不吃用户 site-packages，确保检查的是组件装出来的环境。
+if not sys.flags.isolated:
+    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+
+PREFIX = os.environ.get("PREFIX") or sys.prefix
+MODEL = os.path.join(PREFIX, "share", "ml-tflite", "add.bin")
+
+
+def die(msg, code=2):
+    sys.stderr.write("ml-tflite: " + msg + "\n")
+    raise SystemExit(code)
+
+
+def load_runtime():
+    try:
+        import numpy as np
+    except ImportError:
+        die("找不到 numpy：组件没装完整，请重装")
+    try:
+        import tflite_runtime.interpreter as tflite
+    except ImportError as e:
+        die("找不到 tflite_runtime：%s" % e)
+    try:
+        import tflite_runtime
+        version = getattr(tflite_runtime, "__version__", None)
+    except Exception:
+        version = None
+    return tflite, np, version or "unknown"
+
+
+def cmd_info(_args):
+    tflite, np, version = load_runtime()
+    print("tflite-runtime %s" % version)
+    print("numpy          %s" % np.__version__)
+    print("解释器         %s" % tflite.Interpreter.__module__)
+    print("测试模型       %s%s" % (MODEL, "" if os.path.isfile(MODEL) else "（缺失）"))
+    return 0
+
+
+def cmd_inspect(args):
+    tflite, np, _ = load_runtime()
+    path = args.model
+    if not os.path.isfile(path):
+        die("模型不存在：%s" % path)
+    try:
+        interpreter = tflite.Interpreter(model_path=path)
+        interpreter.allocate_tensors()
+    except Exception as e:
+        die("加载模型失败：%s" % e)
+    print("模型：%s" % path)
+    for label, details in (("输入", interpreter.get_input_details()),
+                           ("输出", interpreter.get_output_details())):
+        print("%s：" % label)
+        for d in details:
+            print("  %-20s shape=%s dtype=%s" %
+                  (d.get("name", "?"), list(d["shape"]), np.dtype(d["dtype"]).name))
+    return 0
+
+
+def selftest(_args):
+    tflite, np, version = load_runtime()
+    if not os.path.isfile(MODEL):
+        die("测试模型缺失：%s" % MODEL)
+    try:
+        interpreter = tflite.Interpreter(model_path=MODEL)
+        interpreter.allocate_tensors()
+    except Exception as e:
+        die("加载测试模型失败：%s" % e)
+    inputs = interpreter.get_input_details()
+    outputs = interpreter.get_output_details()
+    if not inputs or not outputs:
+        die("测试模型没有输入或输出张量")
+    for d in inputs:
+        interpreter.set_tensor(d["index"], np.zeros(d["shape"], dtype=d["dtype"]))
+    try:
+        interpreter.invoke()
+    except Exception as e:
+        die("推理失败：%s" % e)
+    for d in outputs:
+        out = interpreter.get_tensor(d["index"])
+        if out.size == 0:
+            die("输出张量为空：%s" % d.get("name", "?"))
+        if not np.all(np.isfinite(out)):
+            die("输出里有非有限值：%s" % d.get("name", "?"))
+    print("ml-tflite selftest")
+    print("  tflite-runtime %s" % version)
+    print("  numpy          %s" % np.__version__)
+    print("  模型           %s（%d 字节）" % (os.path.basename(MODEL), os.path.getsize(MODEL)))
+    print("===== 总结 ===== tflite=%s numpy=%s model=PASS inference=PASS" %
+          (version, np.__version__))
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="ml-tflite", description="本机 TensorFlow Lite 运行时")
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("info", help="看运行时版本和测试模型").set_defaults(func=cmd_info)
+    sub.add_parser("selftest", help="用自带模型跑一次推理").set_defaults(func=selftest)
+    p = sub.add_parser("inspect", help="看 .tflite 模型的输入输出张量")
+    p.add_argument("model")
+    p.set_defaults(func=cmd_inspect)
+    args = ap.parse_args(argv)
+    if not getattr(args, "func", None):
+        ap.print_help()
+        return 0
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

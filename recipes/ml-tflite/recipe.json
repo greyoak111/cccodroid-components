@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "id": "ml-tflite",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "TensorFlow Lite 推理",
+    "en": "TensorFlow Lite inference"
+  },
+  "desc": {
+    "zh": "在本机运行 TensorFlow Lite 模型：python-tflite-runtime 加载 .tflite 做 CPU 推理。自带 numpy，不依赖其他组件；另带一个 544 字节的 Apache-2.0 测试模型，用来离线验证运行时。用户自己的模型按需放到手机上。",
+    "en": "Run TensorFlow Lite models on the device: python-tflite-runtime loads .tflite files for CPU inference. numpy is bundled, so it has no component dependencies; a 544-byte Apache-2.0 test model is bundled to verify the runtime offline. User models are supplied separately."
+  },
+  "roots": ["python-tflite-runtime"],
+  "bin": ["ml-tflite"],
+  "selftest": "ml-tflite selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "ai",
+  "license": "Apache-2.0",
+  "homepage": "https://www.tensorflow.org/lite",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/ml-tflite": { "src": "bin/ml-tflite", "mode": "755" },
+    "usr/share/ml-tflite/NOTICE": { "src": "NOTICE" }
+  },
+  "fetch": {
+    "usr/share/ml-tflite/add.bin": {
+      "url": "https://raw.githubusercontent.com/tensorflow/tensorflow/v2.21.0/tensorflow/lite/testdata/add.bin",
+      "sha256": "038f8d317c07b094e3b7d0c7aba60a3d9e441eb4188c8515920108b963c3873d",
+      "why": "TensorFlow 官方仓库里的 TFLite 加法测试模型（Apache-2.0，544 字节），给 selftest 和示例做离线推理；官方仓库没有，运行时包也不带模型"
+    }
+  },
+  "notes": "python-tflite-runtime 2.21.0-1（Termux main）。numpy 2.5.4 随组件一起打，组件自包含，不依赖 sci-python；CI 自检和用户安装都不受其他组件状态影响。fetch 的 add.bin 是 TensorFlow v2.21.0 测试数据，Apache-2.0，sha256 已钉死；只用于 selftest/示例。ml-tflite selftest 用 CPU 解释器加载模型、填零输入、invoke 并检查输出，不联网、只写 $TMPDIR。"
+}
