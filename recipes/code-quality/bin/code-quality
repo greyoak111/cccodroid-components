@@ -1,0 +1,209 @@
+#!{{PREFIX}}/bin/python3
+"""code-quality：一次跑 shellcheck + shfmt + ruff。
+
+仓库里的 shebang 是占位符，打包时替换成真实前缀；在仓库里调试请用
+python3 -I recipes/code-quality/bin/code-quality …。
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+PREFIX = os.environ.get("PREFIX") or sys.prefix
+BIN = os.path.join(PREFIX, "bin")
+SH_SUFFIX = (".sh", ".bash")
+PY_SUFFIX = (".py",)
+SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv",
+             "__pycache__", ".ruff_cache", ".mypy_cache", "site-packages"}
+
+
+def die(msg, code=2):
+    sys.stderr.write("code-quality: " + msg + "\n")
+    raise SystemExit(code)
+
+
+def tool(name):
+    path = os.path.join(BIN, name)
+    if not (os.path.isfile(path) and os.access(path, os.X_OK)):
+        die("找不到 %s（%s）——组件没装好？" % (name, path))
+    return path
+
+
+def collect(paths):
+    sh, py = [], []
+    for root in paths or ["."]:
+        if os.path.isfile(root):
+            _add(root, sh, py)
+        elif os.path.isdir(root):
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+                for name in sorted(filenames):
+                    _add(os.path.join(dirpath, name), sh, py)
+        else:
+            die("路径不存在: " + root)
+    return sorted(set(sh)), sorted(set(py))
+
+
+def _add(path, sh, py):
+    lower = path.lower()
+    if lower.endswith(SH_SUFFIX):
+        sh.append(path)
+    elif lower.endswith(PY_SUFFIX):
+        py.append(path)
+
+
+def run(cmd):
+    """跑一个工具，合并 stderr，返回 (退出码, 输出)。"""
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, errors="replace")
+    return p.returncode, p.stdout
+
+
+def chunks(items, n=80):
+    for i in range(0, len(items), n):
+        yield items[i:i + n]
+
+
+def check(paths, quiet=False):
+    sh, py = collect(paths)
+    failed = False
+    report = []
+
+    if sh:
+        sc = tool("shellcheck")
+        fmt = tool("shfmt")
+        for group in chunks(sh):
+            code, out = run([sc, "-x", *group])
+            if code != 0:
+                failed = True
+                report.append(out.rstrip())
+        for group in chunks(sh):
+            code, out = run([fmt, "-d", *group])
+            if code != 0:
+                failed = True
+                report.append(out.rstrip())
+    if py:
+        ruff = tool("ruff")
+        for group in chunks(py):
+            code, out = run([ruff, "check", "--no-cache", *group])
+            if code != 0:
+                failed = True
+                report.append(out.rstrip())
+            code, out = run([ruff, "format", "--no-cache", "--check", *group])
+            if code != 0:
+                failed = True
+                report.append(out.rstrip())
+
+    text = "\n\n".join(x for x in report if x)
+    if text and not quiet:
+        sys.stdout.write(text + "\n")
+    if not quiet:
+        sys.stdout.write("code-quality: shell=%d python=%d -> %s\n" %
+                         (len(sh), len(py), "FAIL" if failed else "PASS"))
+    return 1 if failed else 0
+
+
+def format_files(paths, write):
+    sh, py = collect(paths)
+    changed = False
+
+    if sh:
+        fmt = tool("shfmt")
+        for group in chunks(sh):
+            if write:
+                code, out = run([fmt, "-w", *group])
+            else:
+                code, out = run([fmt, "-d", *group])
+            if out.strip():
+                sys.stdout.write(out.rstrip() + "\n")
+            if code != 0:
+                changed = True
+    if py:
+        ruff = tool("ruff")
+        for group in chunks(py):
+            if write:
+                code, out = run([ruff, "format", "--no-cache", *group])
+                sys.stdout.write(out)
+            else:
+                code, out = run([ruff, "format", "--no-cache", "--check", *group])
+                sys.stdout.write(out)
+                if code != 0:
+                    changed = True
+
+    if write:
+        sys.stdout.write("code-quality: 已格式化 shell=%d python=%d\n" % (len(sh), len(py)))
+        return 0
+    sys.stdout.write("code-quality: shell=%d python=%d -> %s\n" %
+                     (len(sh), len(py), "NEEDS-FORMAT" if changed else "OK"))
+    return 1 if changed else 0
+
+
+def selftest():
+    tmp = tempfile.mkdtemp(prefix="code-quality-", dir=os.environ.get("TMPDIR") or None)
+    try:
+        bad = os.path.join(tmp, "bad")
+        good = os.path.join(tmp, "good")
+        os.mkdir(bad)
+        os.mkdir(good)
+        files = {
+            os.path.join(bad, "bad.sh"): "#!/bin/sh\nname=$1\nif [ $name = ok ];then echo $name;fi\n",
+            os.path.join(bad, "bad.py"): "import os\n",
+            os.path.join(good, "good.sh"): '#!/bin/sh\nname=$1\nif [ "$name" = "ok" ]; then\n\tprintf \'%s\\n\' "$name"\nfi\n',
+            os.path.join(good, "good.py"): "def add(a, b):\n    return a + b\n",
+        }
+        for path, text in files.items():
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+
+        bad_code = check([bad], quiet=True)
+        good_code = check([good], quiet=True)
+        if bad_code == 0 or good_code != 0:
+            sys.stderr.write("selftest 失败：bad=%d good=%d（应为 bad!=0、good=0）\n" %
+                             (bad_code, good_code))
+            return 1
+
+        versions = {}
+        for name in ("shellcheck", "shfmt", "ruff"):
+            code, out = run([tool(name), "--version"])
+            first = (out.strip().splitlines() or [name])[0]
+            versions[name] = first
+        print("code-quality 0.1.0 selftest")
+        for name, ver in versions.items():
+            print("  %-10s %s" % (name, ver))
+        print("===== 总结 ===== shellcheck=OK shfmt=OK ruff=OK check=PASS")
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(
+        prog="code-quality",
+        description="shellcheck + shfmt + ruff 的统一入口（非交互）")
+    sub = ap.add_subparsers(dest="cmd")
+
+    p_check = sub.add_parser("check", help="只检查，不改文件")
+    p_check.add_argument("paths", nargs="*", help="文件或目录，默认当前目录")
+
+    p_fmt = sub.add_parser("fmt", help="查看格式差异；加 --write 才改文件")
+    p_fmt.add_argument("--write", action="store_true", help="真的写回文件（先征得用户同意）")
+    p_fmt.add_argument("paths", nargs="*", help="文件或目录，默认当前目录")
+
+    sub.add_parser("selftest", help="组件自检")
+
+    args = ap.parse_args(argv)
+    if args.cmd == "check":
+        return check(args.paths)
+    if args.cmd == "fmt":
+        return format_files(args.paths, args.write)
+    if args.cmd == "selftest":
+        return selftest()
+    ap.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
