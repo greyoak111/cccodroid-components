@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const prefix = process.env.PREFIX || "/data/data/cc.codroid/files/usr";
+const entry = path.join(prefix, "share", "cccodroid", "components", "qq-bot", "lib", "cli.mjs");
+import(pathToFileURL(entry).href).catch((e) => {
+  console.error("qq-bot: " + (e && e.stack ? e.stack : e));
+  process.exit(1);
+});

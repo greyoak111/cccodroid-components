@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "id": "qq-bot",
+  "kind": "glibc",
+  "revision": 1,
+  "version": "3.2.34",
+  "name": { "zh": "QQ 机器人（原生 NapCat）", "en": "QQ bot (native NapCat)" },
+  "desc": {
+    "zh": "在手机上原生跑 Linux 版 QQ 3.2.34 + NapCat 4.18.42，不使用 proot、不需要 root：QQ 跑在虚拟 X 显示里，NapCat 注入后提供 OneBot v11 接口，附一个只应答白名单会话、明确以 AI 身份回复的桥。QQ 客户端与 NapCat 在首次运行时由用户确认后从官方来源下载（约 74 MB Debian 依赖 + 198 MB QQ + 34 MB NapCat，装后约 1.1 GB），逐个核对 SHA256；组件本身只有脚本。",
+    "en": "Runs Linux QQ 3.2.34 + NapCat 4.18.42 natively on the phone — no proot, no root. QQ runs on a virtual X display, NapCat is injected to expose OneBot v11, and a small bridge replies only in allow-listed conversations, always as an AI. The QQ client and NapCat are downloaded from their official sources on first run after the user consents (~74 MB Debian deps + 198 MB QQ + 34 MB NapCat; ~1.1 GB installed), each verified by SHA256. The component itself contains scripts only."
+  },
+  "roots": ["glibc", "nodejs", "python", "patchelf", "xorg-server-xvfb"],
+  "repos": ["x11"],
+  "bin": ["qq-bot"],
+  "selftest": "qq-bot selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "net",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/NapNeko/NapCatQQ",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/qq-bot": { "src": "bin/qq-bot", "mode": "755" },
+    "usr/share/cccodroid/components/qq-bot/lib/cli.mjs": { "src": "lib/cli.mjs", "mode": "644" },
+    "usr/share/cccodroid/components/qq-bot/lib/paths.mjs": { "src": "lib/paths.mjs", "mode": "644" },
+    "usr/share/cccodroid/components/qq-bot/lib/config.mjs": { "src": "lib/config.mjs", "mode": "644" },
+    "usr/share/cccodroid/components/qq-bot/lib/supervisor.mjs": { "src": "lib/supervisor.mjs", "mode": "644" },
+    "usr/share/cccodroid/components/qq-bot/lib/bridge.mjs": { "src": "lib/bridge.mjs", "mode": "644" },
+    "usr/share/cccodroid/components/qq-bot/lib/selftest.mjs": { "src": "lib/selftest.mjs", "mode": "644" },
+    "usr/share/cccodroid/components/qq-bot/lib/install.py": { "src": "lib/install.py", "mode": "755" },
+    "usr/share/cccodroid/components/qq-bot/lib/NOTICE": { "src": "lib/NOTICE", "mode": "644" }
+  },
+  "notes": "为什么首次运行下载：Linux 版 QQ 是腾讯的闭源免费客户端（deb 里 License: unknown），不能随组件再分发；NapCat 是上游的受限再分发许可（允许带许可证再分发、限非商业），也不适合塞进市场包。组件只带脚本，setup 时从腾讯官方 CDN 下载 linuxqq 3.2.34-53644 arm64（198 MB，sha256 181b895c…），从 NapCatQQ v4.18.42 的 GitHub Release 下载 NapCat.Shell.zip（34 MB，sha256 02e5ff0f…），从 deb.debian.org/trixie 装 GTK3/NSS 等运行库（约 74 MB，按 InRelease 的 SHA256 校验 Packages.gz，再逐个核对 .deb）。全部装进 ~/.cccodroid/qq-bot，不写系统分区。技术路线：Debian 的 GTK3 闭包用组件自带的 glibc 2.44 加载；QQ 的 ELF 解释器用 patchelf 改成 $PREFIX/glibc/lib/ld-linux-aarch64.so.1（否则 /proc/self/exe 指向加载器，Chromium 找不到 icudtl.dat）；Xvfb 用 Termux x11 仓库的 bionic 版（它把 socket 放在 $PREFIX/tmp），QQ 用的 Debian libxcb 会去 /tmp/.X11-unix，所以加一个只监听 127.0.0.1 的 TCP→Unix 代理。日志与登录态都在组件数据目录。桥只连 OneBot v11，不修改 QQ/NapCat；默认白名单为空、群聊只在 @ 时回复、明确声明 AI 身份、没有主动发言/人格仿真/批量操作。"
+}
