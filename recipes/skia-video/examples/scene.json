@@ -1,0 +1,37 @@
+{
+  "name": "skia-title-card",
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "duration": 5,
+  "background": "#0B0F14FF",
+  "layers": [
+    {
+      "type": "rect", "x": 0, "y": 0, "w": 1280, "h": 720,
+      "fill": {"type": "radial", "center": [640, 360], "radius": 760,
+               "stops": [[0, "#1B2A3AFF"], [1, "#0B0F14FF"]]}
+    },
+    {
+      "type": "text", "text": "Skia 视频渲染",
+      "x": {"keys": [[0, 380], [1.2, 640]], "ease": "out"},
+      "y": 300, "size": 96, "align": "center", "fill": "#FFFFFFFF",
+      "opacity": {"keys": [[0, 0], [0.9, 1]], "ease": "out"}
+    },
+    {
+      "type": "text", "text": "帧合成 · 动画 · ffmpeg",
+      "x": 640, "y": 400, "size": 40, "align": "center", "fill": "#8FD3FFFF",
+      "opacity": {"keys": [[0.6, 0], [1.5, 1]], "ease": "out"}
+    },
+    {
+      "type": "rect", "x": 340, "y": 500, "h": 6, "radius": 3,
+      "w": {"keys": [[1.2, 0], [2.2, 600]], "ease": "inOut"},
+      "fill": {"type": "linear", "from": [340, 0], "to": [940, 0],
+               "stops": [[0, "#4ECDC4FF"], [1, "#FF6B6BFF"]]}
+    },
+    {
+      "type": "circle", "cx": {"keys": [[2.2, 140], [5, 1140]], "ease": "inOut"},
+      "cy": 620, "r": 26, "fill": "#FFD166FF", "opacity": 0.9,
+      "blend": "screen"
+    }
+  ]
+}
