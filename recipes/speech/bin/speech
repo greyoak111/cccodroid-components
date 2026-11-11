@@ -1,0 +1,483 @@
+#!{{PREFIX}}/bin/python3
+"""speech：sherpa-onnx 的转写 / 朗读入口，模型按需下载。
+
+仓库里的 shebang 是占位符，打包时替换成真实前缀；在仓库里调试请用
+python3 -I recipes/speech/bin/speech …。
+"""
+
+import argparse
+import glob
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+
+PREFIX = os.environ.get("PREFIX") or sys.prefix
+BIN = os.path.join(PREFIX, "bin")
+OPT = os.environ.get("SPEECH_OPT") or os.path.join(
+    PREFIX, "glibc", "opt", "speech")
+DATA = os.environ.get("SPEECH_DATA") or os.path.join(
+    os.path.expanduser("~"), ".cccodroid", "speech")
+MODELS = os.path.join(DATA, "models")
+ASR_DIR = os.path.join(MODELS, "whisper-small-int8")
+TTS_DIR = os.path.join(MODELS, "melo-tts")
+
+ASR_COMMIT = "8f3c18b358db4d1f2fc1eae49d75cd20989e4309"
+ASR_REPO = "csukuangfj/sherpa-onnx-whisper-small"
+ASR_FILES = [
+    ("small-encoder.int8.onnx", "4cbe7b22fa9026b843b60a68640c747de05bafb1a11b57edc0e66c232d9f33a9", 112442483),
+    ("small-decoder.int8.onnx", "acad50b5c782696e91b55914cc5ab4f756f1532f76e22aa6fc615f39fb69a8ee", 262226114),
+    ("small-tokens.txt", "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126", 816730),
+]
+TTS_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2"
+TTS_SHA = "e58351ed7149f290a54534538badd4077cdbe6fddc964b24d0bee870415d1514"
+TTS_SIZE = 167006755
+
+
+def die(msg, code=2):
+    sys.stderr.write("speech: " + msg + "\n")
+    raise SystemExit(code)
+
+
+def tool(name):
+    path = os.path.join(BIN, name)
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        return path
+    found = shutil.which(name)
+    if found:
+        return found
+    die("找不到 %s（底座没装？）" % name)
+
+
+def run(cmd, env=None, capture=False, cwd=None):
+    p = subprocess.run(cmd, env=env, cwd=cwd, text=True, errors="replace",
+                       stdout=subprocess.PIPE if capture else None,
+                       stderr=subprocess.STDOUT if capture else None)
+    return p.returncode, (p.stdout or "")
+
+
+def ldso():
+    for p in (os.path.join(PREFIX, "glibc", "lib", "ld-linux-aarch64.so.1"),
+              os.path.join(PREFIX, "glibc", "glibc", "lib", "ld-linux-aarch64.so.1")):
+        if os.access(p, os.X_OK):
+            return p
+    die("找不到 glibc 的 ld-linux-aarch64.so.1（底座 glibc 没装？）")
+
+
+def engine_env():
+    """glibc 预编译：清掉 bionic 侧的注入，库路径由 --library-path 给。"""
+    env = os.environ.copy()
+    env.pop("LD_PRELOAD", None)
+    env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+
+def engine(binary, args, capture=True):
+    path = os.path.join(OPT, "bin", binary)
+    if not os.access(path, os.X_OK):
+        die("引擎缺 %s（%s）——组件没装好？" % (binary, path))
+    libs = "%s:%s" % (os.path.join(PREFIX, "glibc", "lib"), os.path.join(OPT, "lib"))
+    return run([ldso(), "--library-path", libs, path, *args],
+               env=engine_env(), capture=capture)
+
+
+def ffmpeg(args):
+    env = os.environ.copy()
+    env.pop("LD_LIBRARY_PATH", None)
+    return run([tool("ffmpeg"), "-nostdin", "-loglevel", "error", "-y", *args],
+               env=env, capture=True)
+
+
+def ffprobe_duration(path):
+    code, out = run([tool("ffprobe"), "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", path], capture=True)
+    try:
+        return float(out.strip())
+    except ValueError:
+        return 0.0
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def asr_ready():
+    return all(os.path.isfile(os.path.join(ASR_DIR, n)) for n, _s, _z in ASR_FILES)
+
+
+def tts_ready():
+    return all(os.path.isfile(os.path.join(TTS_DIR, n))
+               for n in ("model.onnx", "lexicon.txt", "tokens.txt"))
+
+
+def download_once(url, dest, sha, size=None, label=""):
+    part = dest + ".part"
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    print("[speech] 下载 %s ← %s" % (label or os.path.basename(dest), url))
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "cccodroid-speech/0.1"})
+        with urllib.request.urlopen(req, timeout=60) as r, open(part, "wb") as f:
+            h = hashlib.sha256()
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            last = 0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                h.update(chunk)
+                done += len(chunk)
+                if done - last >= 10 << 20:
+                    if total:
+                        print("[speech]   %.1f / %.1f MB" % (done / 2**20, total / 2**20))
+                    else:
+                        print("[speech]   %.1f MB" % (done / 2**20))
+                    last = done
+        if h.hexdigest() != sha:
+            raise ValueError("sha256 不符（得到 %s）" % h.hexdigest())
+        if size and os.path.getsize(part) != size:
+            raise ValueError("大小不符（得到 %d 字节）" % os.path.getsize(part))
+        os.replace(part, dest)
+        print("[speech] 完成 %s" % os.path.basename(dest))
+    except Exception:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        raise
+
+
+def download_any(urls, dest, sha, size=None, label=""):
+    if os.path.isfile(dest) and sha256(dest) == sha:
+        return
+    errors = []
+    for url in urls:
+        try:
+            download_once(url, dest, sha, size, label)
+            return
+        except Exception as e:
+            errors.append("%s: %s" % (url, e))
+            print("[speech] 这个源失败，换下一个：%s" % e)
+    die("下载失败：\n  " + "\n  ".join(errors))
+
+
+def hf_urls(name, endpoint):
+    primary = (endpoint or os.environ.get("HF_ENDPOINT") or "https://huggingface.co").rstrip("/")
+    urls = ["%s/%s/resolve/%s/%s" % (primary, ASR_REPO, ASR_COMMIT, name)]
+    mirror = "https://hf-mirror.com"
+    if primary != mirror:
+        urls.append("%s/%s/resolve/%s/%s" % (mirror, ASR_REPO, ASR_COMMIT, name))
+    return urls
+
+
+def cmd_setup(args):
+    if args.kind == "asr":
+        if not args.yes:
+            die("ASR 模型（Whisper small int8）约 358 MB。先征得用户同意，再加 --yes。")
+        for name, sha, size in ASR_FILES:
+            dest = os.path.join(ASR_DIR, name)
+            download_any(hf_urls(name, args.endpoint), dest, sha, size, name)
+        print("speech: ASR 模型就绪：%s" % ASR_DIR)
+        return 0
+
+    if args.kind == "tts":
+        if not args.yes:
+            die("TTS 模型（MeloTTS zh_en）约 160 MB。先征得用户同意，再加 --yes。")
+        if tts_ready():
+            print("speech: TTS 模型已就绪：%s" % TTS_DIR)
+            return 0
+        tar_path = os.path.join(DATA, "vits-melo-tts-zh_en.tar.bz2")
+        download_any([TTS_URL], tar_path, TTS_SHA, TTS_SIZE, "MeloTTS")
+        tmp = tempfile.mkdtemp(prefix="speech-tts-", dir=os.environ.get("TMPDIR") or None)
+        try:
+            with tarfile.open(tar_path, "r:bz2") as tf:
+                try:
+                    tf.extractall(tmp, filter="data")
+                except TypeError:
+                    tf.extractall(tmp)
+            models = glob.glob(os.path.join(tmp, "**", "model.onnx"), recursive=True)
+            if not models:
+                die("TTS 压缩包里没找到 model.onnx")
+            root = os.path.dirname(models[0])
+            if os.path.exists(TTS_DIR):
+                shutil.rmtree(TTS_DIR)
+            shutil.move(root, TTS_DIR)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+            try:
+                os.remove(tar_path)
+            except OSError:
+                pass
+        if not tts_ready():
+            die("TTS 解压后缺少 model.onnx / lexicon.txt / tokens.txt")
+        print("speech: TTS 模型就绪：%s" % TTS_DIR)
+        return 0
+
+    die("未知模型类型: " + args.kind)
+
+
+def cmd_models(_args):
+    print("引擎：%s" % OPT)
+    print("模型目录：%s" % MODELS)
+    for label, ready, path in (("ASR", asr_ready(), ASR_DIR), ("TTS", tts_ready(), TTS_DIR)):
+        size = 0
+        if os.path.isdir(path):
+            for dirpath, _d, filenames in os.walk(path):
+                for name in filenames:
+                    try:
+                        size += os.path.getsize(os.path.join(dirpath, name))
+                    except OSError:
+                        pass
+        print("  %-3s %-8s %s（%.0f MB）" %
+              (label, "READY" if ready else "MISSING", path, size / 2**20))
+    return 0
+
+
+def parse_result(out):
+    for line in reversed(out.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and '"text"' in line:
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
+def asr_chunk(path, language, threads):
+    args = [
+        "--whisper-encoder=" + os.path.join(ASR_DIR, "small-encoder.int8.onnx"),
+        "--whisper-decoder=" + os.path.join(ASR_DIR, "small-decoder.int8.onnx"),
+        "--tokens=" + os.path.join(ASR_DIR, "small-tokens.txt"),
+        "--whisper-enable-segment-timestamps=true",
+        "--num-threads=%d" % threads,
+    ]
+    if language:
+        args.append("--whisper-language=" + language)
+    args.append(path)
+    code, out = engine("sherpa-onnx-offline", args)
+    data = parse_result(out)
+    if data is None:
+        sys.stderr.write("speech: 识别失败，引擎输出如下：\n" + out[-4000:] + "\n")
+        raise SystemExit(1)
+    return data
+
+
+def split_wav(path, tmp, seconds=30):
+    dur = ffprobe_duration(path)
+    if dur and dur <= seconds - 0.25:
+        return [(path, 0.0, dur or seconds)]
+    pattern = os.path.join(tmp, "chunk-%03d.wav")
+    code, out = ffmpeg(["-i", path, "-f", "segment", "-segment_time", str(seconds),
+                        "-reset_timestamps", "1", "-ac", "1", "-ar", "16000", pattern])
+    if code != 0:
+        die("ffmpeg 切块失败：\n" + out[-2000:])
+    files = sorted(glob.glob(os.path.join(tmp, "chunk-*.wav")))
+    if not files:
+        return [(path, 0.0, dur or seconds)]
+    return [(f, i * seconds, seconds) for i, f in enumerate(files)]
+
+
+def srt_time(sec):
+    ms = int(round(sec * 1000))
+    h, ms = divmod(ms, 3600000)
+    m, ms = divmod(ms, 60000)
+    s, ms = divmod(ms, 1000)
+    return "%02d:%02d:%02d,%03d" % (h, m, s, ms)
+
+
+def cmd_asr(args):
+    if not asr_ready():
+        die("ASR 模型没装：先运行 speech setup asr（需用户同意，约 358 MB）")
+    tmp = tempfile.mkdtemp(prefix="speech-asr-", dir=os.environ.get("TMPDIR") or None)
+    try:
+        wav = os.path.join(tmp, "input.wav")
+        code, out = ffmpeg(["-i", args.audio, "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", wav])
+        if code != 0 or not os.path.isfile(wav):
+            die("ffmpeg 转 16k 单声道失败：\n" + out[-2000:])
+
+        segments = []
+        for chunk, offset, chunk_dur in split_wav(wav, tmp, args.chunk_seconds):
+            data = asr_chunk(chunk, args.language, args.threads)
+            texts = data.get("segment_texts") or []
+            starts = data.get("segment_timestamps") or []
+            durs = data.get("segment_durations") or []
+            if texts and starts and len(starts) == len(texts):
+                for i, text in enumerate(texts):
+                    st = float(starts[i])
+                    du = float(durs[i]) if i < len(durs) else max(0.0, chunk_dur - st)
+                    if text.strip():
+                        segments.append((offset + st, offset + st + du, text.strip()))
+            elif data.get("text", "").strip():
+                segments.append((offset, offset + chunk_dur, data["text"].strip()))
+        segments.sort(key=lambda s: s[0])
+
+        text = " ".join(s[2] for s in segments).strip()
+        fmt = args.format
+        if not fmt:
+            lower = (args.output or "").lower()
+            fmt = "srt" if lower.endswith(".srt") else "json" if lower.endswith(".json") else "text"
+
+        if fmt == "srt":
+            lines = []
+            for i, (start, end, body) in enumerate(segments, 1):
+                lines.append(str(i))
+                lines.append("%s --> %s" % (srt_time(start), srt_time(end)))
+                lines.append(body)
+                lines.append("")
+            content = "\n".join(lines)
+        elif fmt == "json":
+            content = json.dumps({"text": text,
+                                  "segments": [{"start": s, "end": e, "text": t}
+                                               for s, e, t in segments]},
+                                 ensure_ascii=False, indent=2) + "\n"
+        else:
+            content = text + "\n"
+
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(content)
+            sys.stderr.write("speech: 写了 %s（%d 段）\n" % (args.output, len(segments)))
+        else:
+            sys.stdout.write(content)
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def cmd_say(args):
+    if not tts_ready():
+        die("TTS 模型没装：先运行 speech setup tts（需用户同意，约 160 MB）")
+    text = " ".join(args.text).strip()
+    if not text:
+        die("没有要朗读的文本")
+    out = args.output or "speech.wav"
+    tmpwav = out if out.lower().endswith(".wav") else os.path.join(
+        tempfile.mkdtemp(prefix="speech-tts-", dir=os.environ.get("TMPDIR") or None), "out.wav")
+    args_eng = [
+        "--vits-model=" + os.path.join(TTS_DIR, "model.onnx"),
+        "--vits-lexicon=" + os.path.join(TTS_DIR, "lexicon.txt"),
+        "--vits-tokens=" + os.path.join(TTS_DIR, "tokens.txt"),
+        "--output-filename=" + tmpwav,
+        "--num-threads=%d" % args.threads,
+        text,
+    ]
+    code, log = engine("sherpa-onnx-offline-tts", args_eng)
+    if code != 0 or not os.path.isfile(tmpwav) or os.path.getsize(tmpwav) == 0:
+        sys.stderr.write("speech: 合成失败（退出码 %d）：\n%s\n" % (code, log[-4000:]))
+        return 1
+    if tmpwav != out:
+        code, log = ffmpeg(["-i", tmpwav, out])
+        if code != 0:
+            sys.stderr.write("speech: 转码失败：\n%s\n" % log[-2000:])
+            return 1
+        shutil.rmtree(os.path.dirname(tmpwav), ignore_errors=True)
+    print("speech: 写了 %s" % out)
+    return 0
+
+
+def cmd_selftest(_args):
+    if not os.access(os.path.join(OPT, "bin", "sherpa-onnx-version"), os.X_OK):
+        die("引擎目录不对：%s（SPEECH_OPT 指错了？）" % OPT)
+    code, out = engine("sherpa-onnx-version", [])
+    version = "?"
+    for line in out.splitlines():
+        if "sherpa-onnx version" in line:
+            version = line.split(":", 1)[-1].strip()
+    if code != 0 or version == "?":
+        sys.stderr.write("selftest 失败：引擎起不来\n" + out[-4000:] + "\n")
+        return 1
+
+    code, fout = run([tool("ffmpeg"), "-version"], capture=True)
+    if code != 0:
+        sys.stderr.write("selftest 失败：ffmpeg 不可用\n" + fout[-1000:] + "\n")
+        return 1
+
+    asr = asr_ready()
+    tts = tts_ready()
+    if tts:
+        tmp = tempfile.mkdtemp(prefix="speech-test-", dir=os.environ.get("TMPDIR") or None)
+        try:
+            wav = os.path.join(tmp, "t.wav")
+            code, log = engine("sherpa-onnx-offline-tts", [
+                "--vits-model=" + os.path.join(TTS_DIR, "model.onnx"),
+                "--vits-lexicon=" + os.path.join(TTS_DIR, "lexicon.txt"),
+                "--vits-tokens=" + os.path.join(TTS_DIR, "tokens.txt"),
+                "--output-filename=" + wav, "--num-threads=1", "测试"])
+            if code != 0 or not os.path.isfile(wav) or os.path.getsize(wav) == 0:
+                sys.stderr.write("selftest 失败：TTS 合成没有输出\n" + log[-2000:] + "\n")
+                return 1
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    if asr:
+        tmp = tempfile.mkdtemp(prefix="speech-test-", dir=os.environ.get("TMPDIR") or None)
+        try:
+            wav = os.path.join(tmp, "s.wav")
+            code, log = ffmpeg(["-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                                "-t", "1", "-f", "wav", wav])
+            if code == 0:
+                data = asr_chunk(wav, "", 1)
+                if data is None:
+                    return 1
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    print("speech 0.1.0 selftest")
+    print("  sherpa-onnx %s" % version)
+    print("  ASR %s" % ("READY" if asr else "MISSING（speech setup asr）"))
+    print("  TTS %s" % ("READY" if tts else "MISSING（speech setup tts）"))
+    print("===== 总结 ===== sherpa-onnx=%s engine=PASS asr=%s tts=%s" %
+          (version, "READY" if asr else "MISSING", "READY" if tts else "MISSING"))
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(
+        prog="speech",
+        description="语音转写与朗读（sherpa-onnx，非交互）")
+    sub = ap.add_subparsers(dest="cmd")
+
+    p = sub.add_parser("setup", help="按需下载模型（先征得用户同意，再加 --yes）")
+    p.add_argument("kind", choices=["asr", "tts"])
+    p.add_argument("--yes", action="store_true", help="确认下载大文件")
+    p.add_argument("--endpoint", help="HF 端点（默认 huggingface.co，失败会试 hf-mirror.com）")
+    p.set_defaults(func=cmd_setup)
+
+    sub.add_parser("models", help="看模型状态").set_defaults(func=cmd_models)
+
+    p = sub.add_parser("asr", help="把音频转成文字 / SRT / JSON")
+    p.add_argument("audio")
+    p.add_argument("-o", "--output", help="输出文件；后缀 .srt / .json 决定格式")
+    p.add_argument("--format", choices=["text", "srt", "json"], help="覆盖输出格式")
+    p.add_argument("--language", help="如 zh、en；默认自动判断")
+    p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--chunk-seconds", type=int, default=30, help="长音频切块秒数")
+    p.set_defaults(func=cmd_asr)
+
+    p = sub.add_parser("say", help="把文字合成 WAV（或 -o 指定别的格式）")
+    p.add_argument("text", nargs="+")
+    p.add_argument("-o", "--output", default="speech.wav")
+    p.add_argument("--threads", type=int, default=2)
+    p.set_defaults(func=cmd_say)
+
+    sub.add_parser("selftest", help="组件自检").set_defaults(func=cmd_selftest)
+
+    args = ap.parse_args(argv)
+    if not getattr(args, "func", None):
+        ap.print_help()
+        return 0
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
