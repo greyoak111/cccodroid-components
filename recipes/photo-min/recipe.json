@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "photo-min",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "照片小工具（元数据/滤镜/描线/条码）",
+    "en": "Photo toolbox (metadata/filters/tracing/barcodes)"
+  },
+  "desc": {
+    "zh": "补底座 ImageMagick 之外的图片能力：exiv2 读写 EXIF/IPTC/XMP 并清除 GPS，G'MIC 做命令行滤镜与批处理，potrace 把位图描成 SVG，zbarimg 识别二维码和条码。适合整理照片隐私、批量处理图片、把 logo 转矢量、扫图里的码。",
+    "en": "Adds photo capabilities beyond the base ImageMagick: exiv2 reads/writes EXIF/IPTC/XMP and strips GPS, G'MIC applies command-line filters and batch processing, potrace traces bitmaps to SVG, and zbarimg decodes QR codes and barcodes. Useful for photo privacy, batch edits, vectorizing logos and scanning codes in images."
+  },
+  "roots": ["exiv2", "gmic", "potrace", "zbar"],
+  "bin": ["exiv2", "gmic", "potrace", "zbarimg"],
+  "selftest": "photo-min-selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "media",
+  "license": "GPL-2.0-or-later AND CECILL-2.1 AND LGPL-2.1-or-later",
+  "homepage": "https://exiv2.org/",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/photo-min-selftest": { "src": "bin/photo-min-selftest", "mode": "755" }
+  },
+  "notes": "exiv2 0.28.9 + G'MIC 4.0.7 + potrace 1.16 + zbar 0.23.95（Termux main）。底座已有 ImageMagick，zbar 依赖它但不重复打。G'MIC 和 exiv2 都能无头跑；selftest 自造 PGM/PBM，用 G'MIC 转 JPEG 并模糊，exiv2 写读 Artist，potrace 出 SVG，zbarimg 对无码图返回 4（正常无结果），不联网、只写 $TMPDIR。"
+}

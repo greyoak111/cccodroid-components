@@ -1,0 +1,99 @@
+#!{{PREFIX}}/bin/sh
+# photo-min 自检：G'MIC 读 PGM、出 JPEG/模糊图；exiv2 写读 EXIF；potrace 位图→SVG；
+# zbarimg 能加载并对无条码图片正常返回 4。不联网，不读用户文件，只写 $TMPDIR。
+set -eu
+
+: "${PREFIX:={{PREFIX}}}"
+: "${TMPDIR:={{PREFIX}}/tmp}"
+TMP=$(mktemp -d "$TMPDIR/photo-min-selftest.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+
+fail() { echo "✗ $*" >&2; exit 1; }
+
+command -v exiv2 >/dev/null 2>&1 || fail "找不到 exiv2"
+command -v gmic >/dev/null 2>&1 || fail "找不到 gmic"
+command -v potrace >/dev/null 2>&1 || fail "找不到 potrace"
+command -v zbarimg >/dev/null 2>&1 || fail "找不到 zbarimg"
+
+EXIV2_V=$(exiv2 --version 2>/dev/null | sed -n '1p')
+GMIC_V=$(gmic -version 2>&1 | sed 's/\[[0-9;]*m//g' | grep -o 'Version [0-9][0-9.]*' | head -1)
+POTRACE_V=$(potrace --version 2>/dev/null | sed -n '1p')
+ZBAR_V=$(zbarimg --version 2>/dev/null | sed -n '1p')
+case "$EXIV2_V" in
+  *0.*) ;;
+  *) fail "exiv2 --version 输出异常：$EXIV2_V" ;;
+esac
+case "$GMIC_V" in
+  *4.*) ;;
+  *) fail "gmic -version 输出异常：$GMIC_V" ;;
+esac
+case "$POTRACE_V" in
+  *1.*) ;;
+  *) fail "potrace --version 输出异常：$POTRACE_V" ;;
+esac
+case "$ZBAR_V" in
+  *0.*) ;;
+  *) fail "zbarimg --version 输出异常：$ZBAR_V" ;;
+esac
+
+# 自造 8x8 灰度图
+printf 'P2\n8 8\n255\n' >"$TMP/in.pgm"
+printf '%s\n' \
+  '0 0 0 0 0 0 0 0' \
+  '0 255 255 255 255 255 255 0' \
+  '0 255 0 0 0 0 255 0' \
+  '0 255 0 255 255 0 255 0' \
+  '0 255 0 255 255 0 255 0' \
+  '0 255 0 0 0 0 255 0' \
+  '0 255 255 255 255 255 255 0' \
+  '0 0 0 0 0 0 0 0' >>"$TMP/in.pgm"
+
+# G'MIC：读 PGM，模糊后写回 PGM，再输出 JPEG 给 exiv2 / zbarimg 用
+gmic -v -1 "$TMP/in.pgm" -blur 1 -output "$TMP/blur.pgm" >"$TMP/gmic.out" 2>"$TMP/gmic.err" || {
+  tail -20 "$TMP/gmic.err" >&2 || true
+  fail "gmic 处理 PGM 失败"
+}
+[ -s "$TMP/blur.pgm" ] || fail "gmic 没有输出 PGM"
+file "$TMP/blur.pgm" 2>/dev/null | grep -q 'Netpbm' || fail "gmic 输出不是 Netpbm 图"
+gmic -v -1 "$TMP/in.pgm" -output "$TMP/test.jpg" >"$TMP/gmic2.out" 2>"$TMP/gmic2.err" || {
+  tail -20 "$TMP/gmic2.err" >&2 || true
+  fail "gmic 输出 JPEG 失败"
+}
+file "$TMP/test.jpg" 2>/dev/null | grep -q 'JPEG image data' || fail "gmic 输出不是 JPEG"
+
+# exiv2：写入并读回 Artist
+exiv2 -M"set Exif.Image.Artist cccodroid" "$TMP/test.jpg" >"$TMP/exiv2.out" 2>"$TMP/exiv2.err" || {
+  tail -20 "$TMP/exiv2.err" >&2 || true
+  fail "exiv2 写入 EXIF 失败"
+}
+ARTIST=$(exiv2 -K Exif.Image.Artist -P v "$TMP/test.jpg" 2>/dev/null)
+[ "$ARTIST" = "cccodroid" ] || fail "exiv2 读回的 Artist 异常：$ARTIST"
+
+# potrace：把阈值化后的位图描成 SVG
+gmic -v -1 "$TMP/in.pgm" -threshold 50% -output "$TMP/trace.pbm" >/dev/null 2>"$TMP/gmic3.err" || {
+  tail -20 "$TMP/gmic3.err" >&2 || true
+  fail "gmic 输出 PBM 失败"
+}
+potrace -s -o "$TMP/trace.svg" "$TMP/trace.pbm" 2>"$TMP/potrace.err" || {
+  tail -20 "$TMP/potrace.err" >&2 || true
+  fail "potrace 描线失败"
+}
+grep -q '<svg' "$TMP/trace.svg" || fail "potrace 输出里没有 SVG"
+
+# zbarimg：无条码图片应返回 4；只要不是崩溃/找不到库就算通过
+if zbarimg -q --nodisplay "$TMP/test.jpg" >"$TMP/zbar.out" 2>"$TMP/zbar.err"; then
+  :
+else
+  rc=$?
+  [ "$rc" = "4" ] || {
+    tail -20 "$TMP/zbar.err" >&2 || true
+    fail "zbarimg 运行失败（退出码 $rc）"
+  }
+fi
+
+echo "photo-min selftest"
+echo "  exiv2 $EXIV2_V"
+echo "  gmic $GMIC_V"
+echo "  potrace $POTRACE_V"
+echo "  zbar $ZBAR_V"
+echo "===== 总结 ===== exiv2=OK gmic=OK potrace=OK zbar=OK exif=PASS svg=PASS"
