@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "apk-tools",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "APK 检查工具（apktool + dex2jar）",
+    "en": "APK inspection tools (apktool + dex2jar)"
+  },
+  "desc": {
+    "zh": "在设备上检查 APK：apktool 解码资源、Manifest、smali，改完可重建；dex2jar 把 classes.dex 转成 JAR，交给 Java 反编译工具查看。只用于自己开发或已获授权的应用，不用于破解或重新分发。",
+    "en": "Inspect APKs on the device: apktool decodes resources, the manifest and smali and can rebuild; dex2jar converts classes.dex to a JAR for Java decompilers. Intended for your own apps or apps you are authorized to inspect, not for cracking or redistribution."
+  },
+  "roots": ["apktool", "dex2jar"],
+  "bin": ["apktool", "d2j-dex2jar"],
+  "selftest": "apk-tools-selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "dev",
+  "license": "Apache-2.0",
+  "homepage": "https://apktool.org/",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/apk-tools-selftest": { "src": "bin/apk-tools-selftest", "mode": "755" }
+  },
+  "notes": "apktool 3.0.3 + dex2jar 2.4（Termux main）。JDK 21、aapt2、d8、apksigner 由底座提供，不重复打；jadx（约 78 MB）未带，需要 Java 源码级反编译时单独装。selftest 用底座 javac 写一个类、d8 编成 classes.dex，再用 d2j-dex2jar 转 JAR 并检查类文件；apktool 只能验证版本（没有可解码的 APK 样本）。只写 $TMPDIR。"
+}
