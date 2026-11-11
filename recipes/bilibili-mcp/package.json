@@ -1,0 +1,5 @@
+{
+  "name": "cccodroid-bilibili-mcp",
+  "private": true,
+  "dependencies": { "@xzxzzx/bilibili-mcp": "1.14.6" }
+}

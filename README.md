@@ -50,6 +50,7 @@ The app won't offer "Snapdragon only" components on devices with other chips. Fo
 The app labels these "not verified on a device". Read the description before installing.
 
 - `openai-bridge` (preview): turns an OpenAI Chat Completions API you're allowed to use into a local Anthropic Messages endpoint, which you then enter under Settings → Provider & model → Custom endpoints. Requests go to the remote service you configure and may cost money; the bridge only listens on the loopback address. After installing, run `openai-bridge configure` in the terminal; before removing it in the app, run `openai-bridge uninstall --yes`. About 107 MiB. Source: [chenshi723/cccodroid-openai-bridge](https://github.com/chenshi723/cccodroid-openai-bridge).
+- `bilibili-mcp` (MCP): lets Claude read Bilibili — video info, chapters, comments, subtitles, search, favorites. Read-only. Registered as the MCP server `bilibili` on install (cccodroid 0.6.16+). Subtitles, search and favorites need a login: run `bilibili-mcp setup` in the terminal. Upstream: [XZXZZX-Ai/bilibili-mcp](https://github.com/XZXZZX-Ai/bilibili-mcp) (Apache-2.0).
 
 ## How it works
 

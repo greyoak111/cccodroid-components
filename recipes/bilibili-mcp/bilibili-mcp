@@ -1,0 +1,4 @@
+#!{{PREFIX}}/bin/sh
+# bilibili-mcp（上游 github.com/XZXZZX-Ai/bilibili-mcp，npm 包 @xzxzzx/bilibili-mcp）。
+# 不带参数是 stdio MCP 服务（App 装好后自动注册为 bilibili）；setup / check / doctor 等子命令见 --help。
+exec {{PREFIX}}/bin/node {{PREFIX}}/lib/bilibili-mcp/node_modules/@xzxzzx/bilibili-mcp/dist/cli.js "$@"

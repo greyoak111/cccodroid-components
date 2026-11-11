@@ -4,9 +4,9 @@ import path from "node:path";
 import { recipes, modelsOf } from "./lib.mjs";
 
 const KNOWN = new Set(["schema", "id", "kind", "revision", "version", "name", "desc", "repos", "roots", "exclude", "files",
-  "fetch", "npm", "pip", "requires", "bin", "selftest", "needs", "license", "homepage", "maintainers", "notes", "category"]);
+  "fetch", "npm", "pip", "requires", "bin", "selftest", "needs", "license", "homepage", "maintainers", "notes", "category", "mcp"]);
 // 分类（App 扩展页的分类索引条按它分）：只认这几个，界面上有对应的译名
-const CATEGORIES = new Set(["dev", "office", "media", "science", "eda", "cad", "ai", "gpu", "net", "other"]);
+const CATEGORIES = new Set(["dev", "office", "media", "science", "eda", "cad", "ai", "gpu", "net", "mcp", "other"]);
 const KINDS = new Set(["termux", "glibc"]);
 // fetch 不许从市场自己这里取东西：那等于绕开评审往里塞二进制（"不带自带二进制"这条就废了）。
 // 不光是 Release —— PR 里的提交（哪怕后来删了）也能经 raw.githubusercontent.com/<本仓库>/<提交>/… 取到，
@@ -49,6 +49,16 @@ for (const r of recipes()) {
   if (!r.license) err(n, "license 必填（上游软件的许可证）");
   if (!CATEGORIES.has(r.category)) err(n, `category 必填，只能是 ${[...CATEGORIES].join(" / ")}`);
   for (const k of Object.keys(r)) if (k !== "dir" && !KNOWN.has(k)) err(n, "不认识的字段: " + k);
+  // mcp：装好后 App 自动用 claude mcp add 注册的 stdio 服务（卸载时注销）。bin 必须是本组件 bin 里的一个入口
+  if (r.mcp !== undefined) {
+    const m = r.mcp;
+    if (!m || typeof m !== "object" || Array.isArray(m)) err(n, "mcp 要写成对象 { name, bin }");
+    else {
+      for (const k of Object.keys(m)) if (!["name", "bin"].includes(k)) err(n, "mcp 里不认识的键: " + k);
+      if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(m.name || "")) err(n, "mcp.name 只能用小写字母、数字、-（≤40）");
+      if (!(r.bin || []).includes(m.bin)) err(n, "mcp.bin 必须是 bin 里的一个入口命令");
+    }
+  }
   for (const [p, f] of Object.entries(r.files || {})) {
     if (!p.startsWith("usr/") || p.includes("..")) err(n, "files 只能放进 usr/ 下: " + p);
     if (!f.src || f.src.includes("..") || !fs.existsSync(path.join(r.dir, f.src))) err(n, "files 的 src 不存在: " + f.src);

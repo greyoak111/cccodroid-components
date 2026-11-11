@@ -70,6 +70,7 @@ for (const r of recipes()) {
   idx.components[r.id] = {
     name: r.name, desc: r.desc, kind: r.kind || "termux", license: r.license, homepage: r.homepage || "",
     category: r.category || "other",
+    ...(r.mcp ? { mcp: { name: r.mcp.name, bin: r.mcp.bin } } : {}),
     maintainers: r.maintainers || [], needs: r.needs || {}, requires: r.requires || [],
     ...((m) => (m.length ? { models: m } : {}))(modelsOf(r).models),
     builds: [...byBase.values()].map((m) => {
