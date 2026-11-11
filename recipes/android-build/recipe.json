@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "android-build",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "安卓构建（Gradle）",
+    "en": "Android build (Gradle)"
+  },
+  "desc": {
+    "zh": "在手机上用 Gradle 构建安卓工程：带 Gradle 9.9.1、SDK 引导脚本和构建包装。SDK（android.jar / build-tools）因谷歌许可不随组件分发，用户自己下载 command-line tools 并接受许可；组件负责把 aapt2 指向底座的版本。",
+    "en": "Build Android projects on the phone with Gradle: ships Gradle 9.9.1, an SDK bootstrap and a build wrapper. The SDK (android.jar / build-tools) is not redistributed because of Google's license; the user downloads the command-line tools and accepts the license. The wrapper points AGP's aapt2 at the base toolkit build."
+  },
+  "roots": ["gradle"],
+  "bin": ["android-build"],
+  "selftest": "android-build selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "dev",
+  "license": "Apache-2.0",
+  "homepage": "https://gradle.org",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/android-build": { "src": "bin/android-build", "mode": "755" }
+  },
+  "notes": "Gradle 9.9.1（Termux main，126 MB 下载 / 147 MB 装后）。JDK 21、aapt2、d8、apksigner 由底座提供。SDK 不随包：android-build setup-sdk 只解用户下载的 command-line tools zip，--licenses 和 sdkmanager 安装由用户自己在终端完成。build 自动加 -Pandroid.aapt2FromMavenOverride=$PREFIX/bin/aapt2（工程 gradle.properties 已有就不覆盖）。selftest 用临时 Java 工程（--offline）验证 Gradle，6 秒左右；真机 Android 构建按 docs/wanted.md 的 2026-10-19 实测（Gradle 9.8.1）执行，首次约 7 分钟。"
+}

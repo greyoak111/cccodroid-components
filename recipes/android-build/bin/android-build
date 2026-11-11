@@ -1,0 +1,244 @@
+#!{{PREFIX}}/bin/python3
+"""android-build：Gradle 入口、SDK 引导和 Android 构建辅助。
+
+仓库里的 shebang 是占位符，打包时替换成真实前缀；在仓库里调试请用
+python3 -I recipes/android-build/bin/android-build …。
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import zipfile
+from pathlib import PurePosixPath
+
+PREFIX = os.environ.get("PREFIX") or sys.prefix
+BIN = os.path.join(PREFIX, "bin")
+HOME = os.path.expanduser("~")
+SDK = (os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+       or os.path.join(HOME, ".cccodroid", "android-sdk"))
+
+
+def die(msg, code=2):
+    sys.stderr.write("android-build: " + msg + "\n")
+    raise SystemExit(code)
+
+
+def tool(name, required=True):
+    path = os.path.join(BIN, name)
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        return path
+    found = shutil.which(name)
+    if found:
+        return found
+    if required:
+        die("找不到 %s（本组件或底座没装好）" % name)
+    return None
+
+
+def run(cmd, env=None, cwd=None, capture=False):
+    p = subprocess.run(cmd, env=env, cwd=cwd, text=True, errors="replace",
+                       stdout=subprocess.PIPE if capture else None,
+                       stderr=subprocess.STDOUT if capture else None)
+    return p.returncode, (p.stdout or "")
+
+
+def java_home():
+    java = shutil.which("java")
+    if not java:
+        return None
+    return os.path.dirname(os.path.dirname(os.path.realpath(java)))
+
+
+def sdk_manager():
+    p = os.path.join(SDK, "cmdline-tools", "latest", "bin", "sdkmanager")
+    return p if os.path.isfile(p) else None
+
+
+def cmd_doctor(args):
+    print("android-build doctor")
+    print("  PREFIX       ", PREFIX)
+    print("  ANDROID_HOME ", SDK)
+    code, out = run([tool("java"), "-version"], capture=True)
+    print("  java         ", (out.strip().splitlines() or ["?"])[0])
+    code, out = run([tool("gradle"), "--version"], capture=True)
+    first = next((l for l in out.splitlines() if l.startswith("Gradle ")), "Gradle ?")
+    print("  gradle       ", first)
+    for name in ("aapt2", "d8", "apksigner"):
+        p = tool(name, required=False)
+        print("  %-12s %s" % (name, p or "缺失（底座没装？）"))
+    print("  sdkmanager   ", sdk_manager() or "未安装（见 android-build setup-sdk）")
+    for sub in ("platform-tools", "platforms", "build-tools"):
+        d = os.path.join(SDK, sub)
+        if os.path.isdir(d):
+            print("  %-12s %s" % (sub, ", ".join(sorted(os.listdir(d))[:6])))
+        else:
+            print("  %-12s 缺失" % sub)
+    if not sdk_manager():
+        print("\n还没有 SDK。让用户下载 command-line tools zip，然后：")
+        print("  android-build setup-sdk --zip /path/to/commandlinetools-linux-*_latest.zip")
+    return 0
+
+
+def safe_extract(zf, dest):
+    for info in zf.infolist():
+        name = info.filename
+        parts = PurePosixPath(name).parts
+        if name.startswith("/") or ".." in parts:
+            die("zip 里有不安全的路径: " + name)
+    zf.extractall(dest)
+
+
+def cmd_setup_sdk(args):
+    os.makedirs(SDK, exist_ok=True)
+    if not args.zip:
+        print("SDK 目录：%s" % SDK)
+        print("下载 Android command-line tools（官方的 commandlinetools-linux-*_latest.zip），然后：")
+        print("  android-build setup-sdk --zip <下载到的 zip>")
+        print("接着由用户自己在终端跑：")
+        print("  %s/cmdline-tools/latest/bin/sdkmanager --licenses" % SDK)
+        return 0
+
+    zpath = os.path.abspath(args.zip)
+    if not os.path.isfile(zpath):
+        die("zip 不存在: " + zpath)
+    tmp = tempfile.mkdtemp(prefix="android-sdk-", dir=os.environ.get("TMPDIR") or None)
+    try:
+        with zipfile.ZipFile(zpath) as zf:
+            safe_extract(zf, tmp)
+        root = None
+        for dirpath, _dirnames, filenames in os.walk(tmp):
+            if "sdkmanager" in filenames and os.path.basename(dirpath) == "bin":
+                root = os.path.dirname(dirpath)
+                break
+        if not root:
+            die("zip 里没找到 cmdline-tools/bin/sdkmanager，确认下载的是 command-line tools")
+        target = os.path.join(SDK, "cmdline-tools", "latest")
+        if os.path.exists(target):
+            if not args.force:
+                die("目标已存在：%s（要覆盖加 --force）" % target)
+            shutil.rmtree(target)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.move(root, target)
+        for dirpath, _dirnames, filenames in os.walk(target):
+            for name in filenames:
+                p = os.path.join(dirpath, name)
+                if os.path.basename(dirpath) == "bin":
+                    os.chmod(p, 0o755)
+        print("已解到 %s" % target)
+        print("接着由用户自己在终端接受许可并安装组件：")
+        print("  %s --licenses" % os.path.join(target, "bin", "sdkmanager"))
+        print("  %s \"platform-tools\" \"platforms;android-36\" \"build-tools;36.0.0\"" %
+              os.path.join(target, "bin", "sdkmanager"))
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def cmd_build(args):
+    proj = os.path.abspath(args.project or ".")
+    if not any(os.path.exists(os.path.join(proj, n)) for n in
+               ("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")):
+        die("当前目录不像 Gradle 工程（没有 build.gradle / settings.gradle）: " + proj)
+
+    env = os.environ.copy()
+    env.setdefault("ANDROID_HOME", SDK)
+    env.setdefault("ANDROID_SDK_ROOT", SDK)
+    jh = java_home()
+    if jh:
+        env.setdefault("JAVA_HOME", jh)
+
+    gradlew = os.path.join(proj, "gradlew")
+    runner = gradlew if os.path.isfile(gradlew) and os.access(gradlew, os.X_OK) else tool("gradle")
+
+    gradle_args = list(args.gradle_args) or ["assembleDebug"]
+    override = "android.aapt2FromMavenOverride=%s" % os.path.join(PREFIX, "bin", "aapt2")
+    props = os.path.join(proj, "gradle.properties")
+    has_override = False
+    if os.path.isfile(props):
+        with open(props, encoding="utf-8", errors="replace") as f:
+            has_override = "android.aapt2FromMavenOverride" in f.read()
+    if not has_override and not any("android.aapt2FromMavenOverride" in a for a in gradle_args):
+        gradle_args.insert(0, "-P" + override)
+
+    cmd = [runner, "--console=plain", *gradle_args]
+    print("android-build: %s（ANDROID_HOME=%s）" % (" ".join(cmd), env["ANDROID_HOME"]))
+    code, out = run(cmd, env=env, cwd=proj)
+    return code
+
+
+def cmd_selftest(_args):
+    tmp = tempfile.mkdtemp(prefix="android-build-", dir=os.environ.get("TMPDIR") or None)
+    try:
+        proj = os.path.join(tmp, "project")
+        os.makedirs(os.path.join(proj, "src", "main", "java"))
+        with open(os.path.join(proj, "settings.gradle"), "w", encoding="utf-8") as f:
+            f.write("rootProject.name = 'android-build-selftest'\n")
+        with open(os.path.join(proj, "build.gradle"), "w", encoding="utf-8") as f:
+            f.write("plugins { id 'java' }\n"
+                    "java { sourceCompatibility = JavaVersion.VERSION_17 }\n")
+        with open(os.path.join(proj, "src", "main", "java", "Hello.java"), "w",
+                  encoding="utf-8") as f:
+            f.write("public class Hello {\n"
+                    "  public static void main(String[] a) { System.out.println(\"ok\"); }\n"
+                    "}\n")
+
+        env = os.environ.copy()
+        env["GRADLE_USER_HOME"] = os.path.join(tmp, "gradle-home")
+        jh = java_home()
+        if jh:
+            env["JAVA_HOME"] = jh
+        code, out = run([tool("gradle"), "--no-daemon", "--offline", "--console=plain", "-q", "jar"],
+                        env=env, cwd=proj, capture=True)
+        jar_dir = os.path.join(proj, "build", "libs")
+        jars = [n for n in os.listdir(jar_dir)] if os.path.isdir(jar_dir) else []
+        if code != 0 or not jars:
+            sys.stderr.write("selftest 失败：gradle jar → %d\n%s\n" % (code, out[-4000:]))
+            return 1
+
+        code, jout = run([tool("java"), "-version"], capture=True)
+        jline = (jout.strip().splitlines() or ["java ?"])[0]
+        code, gout = run([tool("gradle"), "--version"], capture=True)
+        gline = next((l for l in gout.splitlines() if l.startswith("Gradle ")), "Gradle ?")
+
+        print("android-build 0.1.0 selftest")
+        print("  %s" % jline)
+        print("  %s" % gline)
+        print("  jar: %s" % jars[0])
+        print("===== 总结 ===== gradle=OK java=OK build=PASS")
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(
+        prog="android-build",
+        description="Gradle 入口与 Android SDK 引导（非交互）")
+    sub = ap.add_subparsers(dest="cmd")
+
+    sub.add_parser("doctor", help="检查 Java / Gradle / aapt2 / SDK").set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser("setup-sdk", help="把用户下载的 command-line tools 解到 SDK 目录")
+    p.add_argument("--zip", help="commandlinetools-linux-*_latest.zip")
+    p.add_argument("--force", action="store_true", help="覆盖已有的 cmdline-tools/latest")
+    p.set_defaults(func=cmd_setup_sdk)
+
+    p = sub.add_parser("build", help="在工程目录跑 Gradle（默认 assembleDebug）")
+    p.add_argument("--project", help="工程目录，默认当前目录")
+    p.add_argument("gradle_args", nargs="*", help="Gradle 任务/参数")
+    p.set_defaults(func=cmd_build)
+
+    sub.add_parser("selftest", help="组件自检").set_defaults(func=cmd_selftest)
+
+    args = ap.parse_args(argv)
+    if not getattr(args, "func", None):
+        ap.print_help()
+        return 0
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
