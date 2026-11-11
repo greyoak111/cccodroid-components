@@ -1,0 +1,245 @@
+#!{{PREFIX}}/bin/python3
+"""ccdb：本机 Valkey 的启动/停止/状态/命令行入口。
+
+当前版本只带 Valkey；PostgreSQL 因底座 libicu 与仓库 postgresql 版本不匹配，
+等工具包更新后再加。仓库里的 shebang 是占位符，打包时替换成真实前缀；
+在仓库里调试请用 python3 -I recipes/databases/bin/ccdb …。
+"""
+
+import argparse
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+PREFIX = os.environ.get("PREFIX") or sys.prefix
+BIN = os.path.join(PREFIX, "bin")
+BASE = os.environ.get("CCDB_HOME") or os.path.join(
+    os.path.expanduser("~"), ".cccodroid", "databases")
+DATA = os.path.join(BASE, "valkey")
+PORT = int(os.environ.get("CCDB_VALKEY_PORT") or 6380)
+PID = os.path.join(BASE, "valkey.pid")
+LOG = os.path.join(BASE, "valkey.log")
+
+
+def die(msg, code=2):
+    sys.stderr.write("ccdb: " + msg + "\n")
+    raise SystemExit(code)
+
+
+def tool(name):
+    path = os.path.join(BIN, name)
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        return path
+    found = shutil.which(name)
+    if found:
+        return found
+    die("找不到 %s（组件没装好？）" % name)
+
+
+def run(cmd, env=None, capture=False, cwd=None):
+    p = subprocess.run(cmd, env=env, cwd=cwd, text=True, errors="replace",
+                       stdout=subprocess.PIPE if capture else None,
+                       stderr=subprocess.STDOUT if capture else None)
+    return p.returncode, (p.stdout or "")
+
+
+# 常驻服务不算 Claude 的这一轮：去掉 cccodroid 给 Claude 运行打的标记，
+# 否则停止这一轮或网关重启时会被当成那一轮留下的进程清掉（同 openai-bridge 的 start-bridge.sh）
+RUN_MARKS = ("CCAPP_RUN", "CCAPP_RUN_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+
+
+def service_env():
+    env = os.environ.copy()
+    for k in RUN_MARKS:
+        env.pop(k, None)
+    return env
+
+
+def cli(args, port=None, capture=False):
+    return run([tool("valkey-cli"), "-h", "127.0.0.1", "-p", str(port or PORT), *args],
+               capture=capture)
+
+
+def ping(port=None):
+    code, out = cli(["ping"], port=port, capture=True)
+    return code == 0 and "PONG" in out
+
+
+def wait_ping(port, timeout=10.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        if ping(port):
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def ensure_dirs():
+    os.makedirs(DATA, exist_ok=True)
+
+
+def cmd_init(_args):
+    ensure_dirs()
+    print("ccdb: Valkey 数据目录 %s" % DATA)
+    print("ccdb: 端口 %d（只听 127.0.0.1）" % PORT)
+    return 0
+
+
+def cmd_start(_args):
+    ensure_dirs()
+    if ping():
+        print("ccdb: Valkey 已经在 127.0.0.1:%d 运行" % PORT)
+        return 0
+    cmd = [tool("valkey-server"),
+           "--bind", "127.0.0.1",
+           "--port", str(PORT),
+           "--dir", DATA,
+           "--daemonize", "yes",
+           "--pidfile", PID,
+           "--logfile", LOG]
+    code, out = run(cmd, env=service_env(), capture=True)
+    if code != 0:
+        sys.stderr.write("ccdb: Valkey 启动失败（%d）：\n%s\n" % (code, out[-2000:]))
+        return 1
+    if not wait_ping(PORT):
+        tail = ""
+        try:
+            with open(LOG, encoding="utf-8", errors="replace") as f:
+                tail = f.read()[-2000:]
+        except OSError:
+            pass
+        sys.stderr.write("ccdb: Valkey 没能在 127.0.0.1:%d 起来。日志：\n%s\n" % (PORT, tail))
+        return 1
+    print("ccdb: Valkey 已启动 127.0.0.1:%d（数据 %s）" % (PORT, DATA))
+    return 0
+
+
+def cmd_stop(_args):
+    if not ping():
+        print("ccdb: Valkey 没在运行")
+        return 0
+    code, out = cli(["shutdown"], capture=True)
+    end = time.time() + 5
+    while time.time() < end and ping():
+        time.sleep(0.2)
+    if ping():
+        sys.stderr.write("ccdb: 停止失败：\n%s\n" % out[-2000:])
+        return 1
+    print("ccdb: Valkey 已停止（数据保留在 %s）" % DATA)
+    return 0
+
+
+def cmd_status(_args):
+    print("ccdb: Valkey")
+    print("  地址   127.0.0.1:%d" % PORT)
+    print("  数据   %s" % DATA)
+    print("  状态   %s" % ("运行中" if ping() else "未运行"))
+    if ping():
+        code, out = cli(["info", "server"], capture=True)
+        version = None
+        for line in out.splitlines():
+            if line.startswith("valkey_version:"):
+                version = line.split(":", 1)[1].strip()
+                break
+            if line.startswith("redis_version:") and version is None:
+                version = line.split(":", 1)[1].strip()
+        if version:
+            print("  版本   %s" % version)
+        code, out = cli(["dbsize"], capture=True)
+        if code == 0:
+            print("  键数   %s" % out.strip())
+    return 0
+
+
+def cmd_cli(args):
+    return run([tool("valkey-cli"), "-h", "127.0.0.1", "-p", str(PORT), *args.args])[0]
+
+
+def cmd_info(_args):
+    print("Valkey 连接串：valkey://127.0.0.1:%d" % PORT)
+    print("命令行：ccdb cli <命令>，例如 ccdb cli set hello world")
+    print("状态：%s" % ("运行中" if ping() else "未运行（ccdb start）"))
+    return 0
+
+
+def free_port():
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def selftest():
+    tmp = tempfile.mkdtemp(prefix="ccdb-", dir=os.environ.get("TMPDIR") or None)
+    port = free_port()
+    env = os.environ.copy()
+    env.update({"CCDB_HOME": os.path.join(tmp, "home"), "CCDB_VALKEY_PORT": str(port)})
+    script = os.path.abspath(__file__)
+
+    def cc(*args):
+        return run([sys.executable, script, *args], env=env, capture=True)
+
+    try:
+        for step in (["init"], ["start"]):
+            code, out = cc(*step)
+            if code != 0:
+                sys.stderr.write("selftest 失败：ccdb %s → %d\n%s\n" % (" ".join(step), code, out))
+                return 1
+        code, out = cc("cli", "set", "selftest", "ok")
+        if code != 0:
+            sys.stderr.write("selftest 失败：SET\n%s\n" % out)
+            return 1
+        code, out = cc("cli", "get", "selftest")
+        if code != 0 or out.strip() != "ok":
+            sys.stderr.write("selftest 失败：GET → %r\n" % out)
+            return 1
+        code, out = cc("stop")
+        if code != 0:
+            sys.stderr.write("selftest 失败：stop → %d\n%s\n" % (code, out))
+            return 1
+
+        code, out = run([tool("valkey-server"), "--version"], capture=True)
+        version = (out.strip().splitlines() or ["Valkey"])[0]
+        print("ccdb 0.1.0 selftest")
+        print("  %s" % version)
+        print("===== 总结 ===== valkey=%s start=PASS set=PASS get=PASS stop=PASS" %
+              (version.split("v=")[1].split()[0] if "v=" in version else "OK"))
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(
+        prog="ccdb",
+        description="本机 Valkey 管理（非交互；PostgreSQL 等底座更新后加入）")
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("init", help="建数据目录").set_defaults(func=cmd_init)
+    sub.add_parser("start", help="启动 Valkey").set_defaults(func=cmd_start)
+    sub.add_parser("stop", help="停止 Valkey").set_defaults(func=cmd_stop)
+    sub.add_parser("status", help="看状态").set_defaults(func=cmd_status)
+    sub.add_parser("info", help="看连接信息").set_defaults(func=cmd_info)
+    p = sub.add_parser("cli", help="执行 valkey-cli 命令")
+    p.add_argument("args", nargs=argparse.REMAINDER)
+    p.set_defaults(func=cmd_cli)
+    sub.add_parser("selftest", help="组件自检").set_defaults(func=cmd_selftest)
+
+    args = ap.parse_args(argv)
+    if not getattr(args, "func", None):
+        ap.print_help()
+        return 0
+    return args.func(args)
+
+
+def cmd_selftest(_args):
+    return selftest()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
