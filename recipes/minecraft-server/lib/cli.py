@@ -338,6 +338,10 @@ def cmd_start(args: list[str]) -> None:
         pass
 
     env = os.environ.copy()
+    # 服务器要常驻，不算 Claude 的这一轮：去掉 cccodroid 的运行标记，否则停止这一轮或网关重启时
+    # 会被当成那一轮留下的进程清掉（同 openai-bridge 的 start-bridge.sh）
+    for k in ("CCAPP_RUN", "CCAPP_RUN_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"):
+        env.pop(k, None)
     env["PREFIX"] = str(PREFIX)
     env["CCCODROID_MINECRAFT_DATA"] = str(DATA)
     env["TMPDIR"] = str(TMP_DIR)

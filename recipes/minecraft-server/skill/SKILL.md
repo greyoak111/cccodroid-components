@@ -48,7 +48,7 @@ minecraft-server status           # 进程、地址、运行时间、最后一�
 ```
 minecraft-server（$PREFIX/bin 的 sh 包装）
   └─ $PREFIX/bin/python3 .../lib/cli.py
-       └─ supervisor.py（detached，数据目录的 run/state.json 记录 pid）
+       └─ supervisor.py（detached，去掉了 CCAPP_RUN 等运行标记，不随这一轮对话停止而退出；数据目录的 run/state.json 记录 pid）
             ├─ java -Xms512M -Xmx2G -XX:+UseG1GC -jar paper.jar nogui
             │    ├─ 首次启动：Paperclip 从 Mojang 下载原版服务端到 cache/，再打补丁
             │    └─ 监听 server.properties 里的 server-ip:server-port（默认 127.0.0.1:25565）
