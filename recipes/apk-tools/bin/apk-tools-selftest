@@ -1,0 +1,67 @@
+#!{{PREFIX}}/bin/sh
+# apk-tools 自检：apktool 版本；用底座 javac + d8 造一个 classes.dex，再用 dex2jar 转成 JAR
+# 并确认类文件在里面。不联网，不读用户 APK，只写 $TMPDIR。
+set -eu
+
+: "${PREFIX:={{PREFIX}}}"
+: "${TMPDIR:={{PREFIX}}/tmp}"
+TMP=$(mktemp -d "$TMPDIR/apk-tools-selftest.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+
+fail() { echo "✗ $*" >&2; exit 1; }
+
+command -v apktool >/dev/null 2>&1 || fail "找不到 apktool"
+command -v d2j-dex2jar >/dev/null 2>&1 || fail "找不到 d2j-dex2jar"
+command -v javac >/dev/null 2>&1 || fail "找不到 javac（底座 JDK）"
+command -v d8 >/dev/null 2>&1 || fail "找不到 d8（底座）"
+command -v unzip >/dev/null 2>&1 || fail "找不到 unzip"
+
+if apktool --version >"$TMP/apktool.out" 2>&1; then
+  APKTOOL_V=$(tail -1 "$TMP/apktool.out")
+else
+  # 本地 staging 时包装脚本的 jar 路径仍指向真实前缀；直接跑组件里的 jar。
+  AJ="$PREFIX/share/java/apktool.jar"
+  [ -r "$AJ" ] || fail "apktool 找不到 jar，且 $AJ 不存在"
+  APKTOOL_V=$(java -jar "$AJ" --version 2>&1 | tail -1)
+fi
+case "$APKTOOL_V" in
+  *3.*) ;;
+  *) fail "apktool --version 输出异常：$APKTOOL_V" ;;
+esac
+
+mkdir -p "$TMP/src" "$TMP/classes" "$TMP/dex"
+cat >"$TMP/src/Hello.java" <<'JAVA'
+public class Hello {
+    public static void main(String[] args) {
+        System.out.println("hello from dex2jar");
+    }
+}
+JAVA
+javac -d "$TMP/classes" "$TMP/src/Hello.java" >"$TMP/javac.log" 2>&1 || {
+  tail -20 "$TMP/javac.log" >&2 || true
+  fail "javac 编译失败"
+}
+d8 --min-api 26 --output "$TMP/dex" "$TMP/classes/Hello.class" >"$TMP/d8.log" 2>&1 || {
+  tail -20 "$TMP/d8.log" >&2 || true
+  fail "d8 生成 DEX 失败"
+}
+[ -s "$TMP/dex/classes.dex" ] || fail "d8 没有生成 classes.dex"
+
+d2j-dex2jar --output "$TMP/hello.jar" "$TMP/dex/classes.dex" >"$TMP/d2j.log" 2>&1 || {
+  tail -30 "$TMP/d2j.log" >&2 || true
+  fail "dex2jar 转换失败"
+}
+[ -s "$TMP/hello.jar" ] || fail "dex2jar 没有生成 JAR"
+unzip -l "$TMP/hello.jar" >"$TMP/list.log" 2>&1 || {
+  tail -20 "$TMP/list.log" >&2 || true
+  fail "读不了 dex2jar 产出的 JAR"
+}
+grep -q 'Hello.class' "$TMP/list.log" || {
+  tail -30 "$TMP/list.log" >&2 || true
+  fail "JAR 里没有 Hello.class"
+}
+
+echo "apk-tools selftest"
+echo "  apktool $APKTOOL_V"
+echo "  dex2jar 可执行，DEX → JAR 成功"
+echo "===== 总结 ===== apktool=OK dex2jar=OK dex-to-jar=PASS"
