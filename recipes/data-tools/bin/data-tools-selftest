@@ -1,0 +1,70 @@
+#!{{PREFIX}}/bin/sh
+# data-tools 自检：用自造样本验证 mlr（CSV→JSON）、xmlstarlet（XPath）、xmllint（XPath）。
+# 不联网，不读用户文件，只写 $TMPDIR。
+set -eu
+
+: "${TMPDIR:={{PREFIX}}/tmp}"
+TMP=$(mktemp -d "$TMPDIR/data-tools-selftest.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+
+fail() { echo "✗ $*" >&2; exit 1; }
+
+command -v mlr >/dev/null 2>&1 || fail "找不到 mlr"
+command -v xmlstarlet >/dev/null 2>&1 || fail "找不到 xmlstarlet"
+command -v xmllint >/dev/null 2>&1 || fail "找不到 xmllint"
+
+MLR_V=$(mlr --version 2>/dev/null | sed -n '1p')
+XML_V=$(xmlstarlet --version 2>/dev/null | sed -n '1p')
+LXML_V=$(xmllint --version 2>&1 | sed -n '1p')
+case "$MLR_V" in
+  "mlr 6."*) ;;
+  *) fail "mlr --version 输出异常：$MLR_V" ;;
+esac
+case "$XML_V" in
+  *1.*) ;;
+  *) fail "xmlstarlet --version 输出异常：$XML_V" ;;
+esac
+case "$LXML_V" in
+  *libxml*) ;;
+  *) fail "xmllint --version 输出异常：$LXML_V" ;;
+esac
+
+# CSV → JSON：检查字段和值都过来了
+printf 'name,score\nalice,3\nbob,5\n' >"$TMP/in.csv"
+mlr --icsv --ojson cat "$TMP/in.csv" >"$TMP/out.json" 2>"$TMP/mlr.err" || {
+  tail -20 "$TMP/mlr.err" >&2 || true
+  fail "mlr CSV→JSON 失败"
+}
+grep -q '"name": "alice"' "$TMP/out.json" || {
+  tail -20 "$TMP/out.json" >&2 || true
+  fail "mlr 输出里没有 alice"
+}
+grep -q '"score": 3' "$TMP/out.json" || {
+  tail -20 "$TMP/out.json" >&2 || true
+  fail "mlr 输出里没有 score=3"
+}
+
+# XML / XPath：xmlstarlet 与 xmllint 各查一次
+printf '<root><item id="1">alpha</item><item id="2">beta</item></root>\n' >"$TMP/in.xml"
+xmlstarlet sel -t -v '/root/item[@id="1"]' "$TMP/in.xml" >"$TMP/star.out" 2>"$TMP/star.err" || {
+  tail -20 "$TMP/star.err" >&2 || true
+  fail "xmlstarlet XPath 失败"
+}
+[ "$(cat "$TMP/star.out")" = "alpha" ] || {
+  cat "$TMP/star.out" >&2 || true
+  fail "xmlstarlet 结果不是 alpha"
+}
+xmllint --xpath 'string(/root/item[@id="2"])' "$TMP/in.xml" >"$TMP/lint.out" 2>"$TMP/lint.err" || {
+  tail -20 "$TMP/lint.err" >&2 || true
+  fail "xmllint XPath 失败"
+}
+[ "$(cat "$TMP/lint.out")" = "beta" ] || {
+  cat "$TMP/lint.out" >&2 || true
+  fail "xmllint 结果不是 beta"
+}
+
+echo "data-tools selftest"
+echo "  $MLR_V"
+echo "  $XML_V"
+echo "  $LXML_V"
+echo "===== 总结 ===== miller=OK xmlstarlet=OK xmllint=OK csv=PASS xpath=PASS"

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "data-tools",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "数据工具（CSV/XML）",
+    "en": "Data tools (CSV/XML)"
+  },
+  "desc": {
+    "zh": "在本机处理 CSV/TSV/JSON 和 XML：miller（mlr）做流式表格转换、连接、统计，xmlstarlet 和 xmllint 做 XPath 查询与校验。适合查看、清洗、合并导出数据和调试接口返回的 XML。",
+    "en": "Process CSV/TSV/JSON and XML on the device: miller (mlr) for streaming table conversion, joins and stats, xmlstarlet and xmllint for XPath queries and validation. Useful for inspecting, cleaning and merging exported data and debugging XML API responses."
+  },
+  "roots": ["miller", "xmlstarlet", "libxml2-utils"],
+  "bin": ["mlr", "xmlstarlet", "xmllint"],
+  "selftest": "data-tools-selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "dev",
+  "license": "BSD-2-Clause AND GPL-2.0-or-later AND MIT",
+  "homepage": "https://miller.readthedocs.io/",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/data-tools-selftest": { "src": "bin/data-tools-selftest", "mode": "755" }
+  },
+  "notes": "miller 6.22.0 + xmlstarlet 1.7.0 + libxml2-utils 2.15.4（Termux main）。libxml2-utils 依赖底座同版本的 libxml2；底座已有 readline、libxml2，不重复打。selftest 用自造 CSV 和 XML 验证 mlr 的 CSV→JSON、xmlstarlet 的 XPath、xmllint 的 XPath，不联网、只写 $TMPDIR。"
+}
