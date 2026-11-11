@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "code-quality",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "代码质量（shellcheck + shfmt + ruff）",
+    "en": "Code quality (shellcheck + shfmt + ruff)"
+  },
+  "desc": {
+    "zh": "检查并格式化 shell 和 Python：shellcheck 找引用/ quoting 错误，shfmt 统一 shell 缩进，ruff 检查并格式化 Python。带一个非交互的统一入口 code-quality，默认只报不改。",
+    "en": "Lint and format shell and Python: shellcheck for quoting and reference bugs, shfmt for shell formatting, ruff for Python linting and formatting. Ships a non-interactive wrapper, code-quality, that reports by default and never rewrites files unless asked."
+  },
+  "roots": ["shellcheck", "shfmt", "ruff"],
+  "bin": ["code-quality"],
+  "selftest": "code-quality selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "dev",
+  "license": "GPL-3.0-or-later AND BSD-3-Clause AND MIT",
+  "homepage": "https://www.shellcheck.net/",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/code-quality": { "src": "bin/code-quality", "mode": "755" }
+  },
+  "notes": "三个工具都来自 Termux main：shellcheck 0.11.0、shfmt 3.14.1、ruff 0.17.4（按仓库当前版本打包）。code-quality 是 Python 包装脚本，只用标准库；check 默认只读，fmt 只有 --write 才写回。selftest 在 $TMPDIR 造一好一坏两组样本，确认坏样本会失败、好样本通过。"
+}
