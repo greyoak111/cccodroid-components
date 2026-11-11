@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "minecraft-server",
+  "kind": "termux",
+  "revision": 1,
+  "version": "1.21.11-132",
+  "name": {
+    "zh": "Minecraft 服务端（Paper）",
+    "en": "Minecraft server (Paper)"
+  },
+  "desc": {
+    "zh": "在手机上原生开 Minecraft Java 版服务器：Paper 1.21.11-132 跑在底座 Java 21 上，默认只监听 127.0.0.1；带控制台、白名单、世界备份和优雅停止。首次启动会从 Mojang 官方下载服务端并打补丁（约 54 MB，5–15 分钟），EULA 必须由用户自己接受。",
+    "en": "Run a native Minecraft Java server on the phone: Paper 1.21.11-132 on the base Java 21, loopback-only by default, with console, whitelist, world backups and graceful shutdown. The first start downloads the Mojang server and patches it (about 54 MB, 5–15 minutes); the user must accept the Minecraft EULA themselves."
+  },
+  "roots": [
+    "openjdk-21",
+    "python"
+  ],
+  "bin": [
+    "minecraft-server"
+  ],
+  "selftest": "minecraft-server selftest",
+  "needs": {
+    "shizuku": false,
+    "display": false,
+    "gpu": false
+  },
+  "category": "other",
+  "license": "GPL-3.0",
+  "homepage": "https://papermc.io/downloads/paper",
+  "maintainers": [
+    "greyoak111"
+  ],
+  "fetch": {
+    "usr/share/cccodroid/components/minecraft-server/paper.jar": {
+      "url": "https://fill-data.papermc.io/v1/objects/5ffef465eeeb5f2a3c23a24419d97c51afd7dbb4923ff42df9a3f58bba1ccfba/paper-1.21.11-132.jar",
+      "sha256": "5ffef465eeeb5f2a3c23a24419d97c51afd7dbb4923ff42df9a3f58bba1ccfba",
+      "source": "PaperMC/Paper",
+      "version": "1.21.11-132",
+      "why": "Paper 1.21.11 build 132 服务端本体，组件运行必需；Termux 官方仓库没有 Minecraft 服务端。Paper 是 GPL-3.0，Minecraft 原版服务端 jar 不随组件分发，由 Paper 在首次启动时从 Mojang 官方地址下载。"
+    }
+  },
+  "files": {
+    "usr/bin/minecraft-server": {
+      "src": "bin/minecraft-server",
+      "mode": "755"
+    },
+    "usr/share/cccodroid/components/minecraft-server/lib/common.py": {
+      "src": "lib/common.py",
+      "mode": "644"
+    },
+    "usr/share/cccodroid/components/minecraft-server/lib/cli.py": {
+      "src": "lib/cli.py",
+      "mode": "644"
+    },
+    "usr/share/cccodroid/components/minecraft-server/lib/supervisor.py": {
+      "src": "lib/supervisor.py",
+      "mode": "644"
+    },
+    "usr/share/cccodroid/components/minecraft-server/lib/NOTICE": {
+      "src": "lib/NOTICE",
+      "mode": "644"
+    }
+  },
+  "notes": "Paper 1.21.11 build 132（版本号 1.21.11-132）来自官方 fill-data.papermc.io，sha256 钉死。Java 21 与 Python 由底座提供（devkit-2026.10.28 已含 openjdk-21、python），roots 写出来是为了换底座时能被解出来。首次 start 时 Paperclip 会从 Mojang 官方下载 1.21.11 原版服务端到数据目录的 cache/，再打补丁；2026-11-12 在 HONOR Magic V6 上实测这一步约 9 分钟，之后启动约 13 秒。EULA 由用户读 https://aka.ms/MinecraftEULA 后，由 Claude 征得同意再执行 setup --accept-eula；组件不自动接受，也不支持 offline-mode。默认 server-ip=127.0.0.1，局域网要显式 --lan 或 config set bind lan。Paper 最新版 26.3 要 Java 25，底座是 21，所以这里锁 1.21.11。"
+}

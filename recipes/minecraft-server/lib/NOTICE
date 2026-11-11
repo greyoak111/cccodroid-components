@@ -1,0 +1,22 @@
+minecraft-server 组件说明 / NOTICE
+
+组件脚本（bin/, lib/*.py）：
+  本组件代码以 Apache-2.0 发布。
+
+Paper：
+  Paper 1.21.11 build 132，GPL-3.0。
+  上游：https://github.com/PaperMC/Paper
+  组件通过 fetch 从 PaperMC 官方下载地址取 paper.jar，sha256：
+  5ffef465eeeb5f2a3c23a24419d97c51afd7dbb4923ff42df9a3f58bba1ccfba
+  组件不修改 Paper 本体。
+
+Minecraft：
+  Minecraft 服务端 jar 是 Mojang 的专有软件，不随本组件分发，也不在组件包里。
+  Paper 首次启动时会从 Mojang 官方地址下载 1.21.11 原版服务端，并在本地打补丁。
+  运行服务端需要用户自己阅读并接受 Minecraft 最终用户许可协议（EULA）：
+  https://aka.ms/MinecraftEULA
+  组件不会自动接受 EULA，也不提供 offline-mode/破解客户端支持。
+
+数据：
+  所有世界、配置、日志和备份都在 ~/.cccodroid/minecraft-server 下，不写系统分区。
+  组件不收集、不上传账号凭据；online-mode=true 时由 Minecraft 客户端和 Mojang 会话服务完成认证。
