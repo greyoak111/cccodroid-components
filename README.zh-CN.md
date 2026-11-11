@@ -50,6 +50,7 @@ cccodroid 从 0.1.10 起读这个仓库。浏览器（Chromium）这类预置组
 App 里会标「未经真机验证」，装之前先看说明。
 
 - `openai-bridge`（预览）：把你自己有权使用的 OpenAI Chat Completions API 转成本机的 Anthropic Messages 接口，再到「设置 → 接口与型号 → 自定义接口」里填本机地址。请求会发到你配置的远端，可能收费；服务只监听本机回环地址。装好后在终端运行 `openai-bridge configure` 配置；从 App 卸载前先运行 `openai-bridge uninstall --yes`。包体约 107 MiB。源仓库：[chenshi723/cccodroid-openai-bridge](https://github.com/chenshi723/cccodroid-openai-bridge)。
+- `bilibili-mcp`（MCP）：让 Claude 读 B 站——视频信息、章节、评论、字幕、搜索、收藏夹，只读。装好后自动注册为 MCP 服务 `bilibili`（cccodroid 0.6.16 起）。字幕、搜索、收藏夹要登录：在终端运行 `bilibili-mcp setup`。上游：[XZXZZX-Ai/bilibili-mcp](https://github.com/XZXZZX-Ai/bilibili-mcp)（Apache-2.0）。
 
 ## 怎么运作
 

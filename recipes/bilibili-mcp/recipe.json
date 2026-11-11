@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "bilibili-mcp",
+  "kind": "termux",
+  "revision": 1,
+  "version": "1.14.6",
+  "name": { "zh": "B 站 MCP（bilibili-mcp）", "en": "Bilibili MCP (bilibili-mcp)" },
+  "desc": {
+    "zh": "让 Claude 读 B 站：查视频信息、简介、章节、评论、字幕，搜视频和 UP 主，看收藏夹。只读，不发评论不点赞。装好后自动注册为 MCP 服务 bilibili；要看登录才有的内容时在终端跑 bilibili-mcp setup 扫码。来自 XZXZZX-Ai/bilibili-mcp。",
+    "en": "Lets Claude read Bilibili: video info, descriptions, chapters, comments and subtitles, video and creator search, favorites. Read-only, never posts or likes. Registered as the MCP server bilibili on install; run bilibili-mcp setup in a terminal to sign in by QR code for login-only content. From XZXZZX-Ai/bilibili-mcp."
+  },
+  "roots": ["nodejs"],
+  "bin": ["bilibili-mcp"],
+  "selftest": "bilibili-mcp --version",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "mcp",
+  "mcp": { "name": "bilibili", "bin": "bilibili-mcp" },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/XZXZZX-Ai/bilibili-mcp",
+  "maintainers": ["greyoak111"],
+  "npm": {
+    "dir": "usr/lib/bilibili-mcp",
+    "why": "bilibili-mcp 只在 npm 上发布（@xzxzzx/bilibili-mcp），Termux 官方仓库没有；纯 JS，按 package-lock.json 装"
+  },
+  "files": {
+    "usr/bin/bilibili-mcp": { "src": "bilibili-mcp", "mode": "755" }
+  },
+  "notes": "升级：改 package.json 里的版本，在任意目录 npm install --package-lock-only 重新生成 package-lock.json，同步 version、或只改配方时加 revision。上游 README 的工具清单变了要同步 skill。"
+}

@@ -32,7 +32,7 @@ SHA256，CI 下载核对后打进包里。规则见下面「`fetch`：仓库外�
 | `bin` | ✓ | 入口命令（相对 `$PREFIX/bin`），App 里显示 |
 | `selftest` | ✓ | 装好后能证明它能跑的一条命令，比如 `gh --version` |
 | `license` | ✓ | 上游软件的许可证（SPDX 写法） |
-| `category` | ✓ | 分类，App 扩展页的分类索引条按它分：`dev` 开发工具 · `office` 文档办公 · `media` 图像影音 · `science` 科学计算 · `eda` 电子设计 · `cad` 3D 与建模 · `ai` AI 推理 · `gpu` GPU 与驱动 · `net` 网络 · `other` 其他 |
+| `category` | ✓ | 分类，App 扩展页的分类索引条按它分：`dev` 开发工具 · `office` 文档办公 · `media` 图像影音 · `science` 科学计算 · `eda` 电子设计 · `cad` 3D 与建模 · `ai` AI 推理 · `gpu` GPU 与驱动 · `net` 网络 · `mcp` MCP 服务 · `other` 其他 |
 | `repos` | | 额外的 Termux 仓库，目前只有 `"x11"` |
 | `exclude` | | 闭包里不要的包（比如 postinst 会失败的可选依赖） |
 | `files` | | 额外放进包里的文件：`{ "usr/bin/xxx": { "src": "xxx", "mode": "755" } }`。目标只能在 `usr/` 下；内容里的 `{{PREFIX}}` 会换成真实前缀 |
@@ -40,6 +40,7 @@ SHA256，CI 下载核对后打进包里。规则见下面「`fetch`：仓库外�
 | `npm` | | 只在 npm 上发布的 Node 程序，按配方目录里的 `package-lock.json` 装，见「`npm`」一节 |
 | `needs` | | `{ "shizuku": bool, "display": bool, "gpu": bool \| "adreno" \| "mali" }` —— 用到这些时如实写，App 据此提示。`gpu: "adreno"` = 只能用在高通骁龙（Adreno GPU）上（cccodroid 0.1.11 起）；`gpu: "mali"` = 只能用在 ARM Mali GPU（天玑、Exynos 等）上（cccodroid 0.3.3 起）。App 在没有对应设备节点的机器上直接不给装，更早的版本忽略 |
 | `requires` | | 依赖的其它组件 id，例如 `["gpu-driver-glibc"]`。App 会让用户先装它们；有组件依赖时不让卸载被依赖的那个（cccodroid 0.1.11 起；更早的版本忽略） |
+| `mcp` | | `{ "name": "bilibili", "bin": "bilibili-mcp" }` —— 组件本身是 stdio 型 MCP 服务时写：装好后 App 用 `claude mcp add` 以 `name` 注册 `$PREFIX/bin/<bin>`，卸载时注销。`bin` 必须是 `bin` 里的一个；`category` 一般写 `mcp`（cccodroid 0.6.16 起；更早的版本忽略，只装命令） |
 | `homepage` | | 上游主页 |
 | `maintainers` | | 维护这个配方的 GitHub 用户名 |
 | `notes` | | 给维护者看的备注 |
