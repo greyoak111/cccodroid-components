@@ -1,0 +1,4 @@
+#!{{PREFIX}}/bin/sh
+# bili-groups 的 stdio MCP 服务（7 个工具）；App 装好后自动注册为 bili-groups
+mkdir -p "$HOME/.bili-groups/data"
+exec {{PREFIX}}/bin/python3 {{PREFIX}}/lib/bili-groups/bili_mcp.py "$@"

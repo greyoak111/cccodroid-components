@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "id": "bili-groups",
+  "kind": "termux",
+  "revision": 1,
+  "version": "1.0",
+  "name": {
+    "zh": "B 站关注分组",
+    "en": "Bilibili follow groups"
+  },
+  "desc": {
+    "zh": "让 Claude 帮你整理 B 站关注：列分组、建分组、批量把人移进分组、查某人在哪个组，另带「按近期投稿重新分组」的脚本。会改你账号里的分组。装好后自动注册为 MCP 服务 bili-groups；先在终端跑 bili-groups login 扫码。作者 chenshi723。",
+    "en": "Lets Claude organize your Bilibili followings: list and create follow groups, move people into groups in bulk, see which group someone is in, plus scripts to regroup by recent uploads. It changes the groups on your account. Registered as the MCP server bili-groups on install; run bili-groups login in a terminal first to sign in by QR code. By chenshi723."
+  },
+  "roots": [
+    "python"
+  ],
+  "bin": [
+    "bili-groups",
+    "bili-groups-mcp"
+  ],
+  "selftest": "bili-groups --help",
+  "needs": {
+    "shizuku": false,
+    "display": false,
+    "gpu": false
+  },
+  "category": "mcp",
+  "mcp": {
+    "name": "bili-groups",
+    "bin": "bili-groups-mcp"
+  },
+  "license": "Apache-2.0",
+  "maintainers": [
+    "greyoak111"
+  ],
+  "pip": {
+    "why": "扫码登录要把登录链接画成二维码图片，用 segno（纯 Python，BSD-3-Clause）",
+    "wheels": [
+      {
+        "url": "https://files.pythonhosted.org/packages/d6/02/12c73fd423eb9577b97fc1924966b929eff7074ae6b2e15dd3d30cb9e4ae/segno-1.6.6-py3-none-any.whl",
+        "sha256": "28c7d081ed0cf935e0411293a465efd4d500704072cdb039778a2ab8736190c7"
+      }
+    ]
+  },
+  "files": {
+    "usr/bin/bili-groups": {
+      "src": "bili-groups",
+      "mode": "755"
+    },
+    "usr/bin/bili-groups-mcp": {
+      "src": "bili-groups-mcp",
+      "mode": "755"
+    },
+    "usr/lib/bili-groups/apply_changes.py": {
+      "src": "lib/apply_changes.py"
+    },
+    "usr/lib/bili-groups/bili.py": {
+      "src": "lib/bili.py"
+    },
+    "usr/lib/bili-groups/bili_mcp.py": {
+      "src": "lib/bili_mcp.py"
+    },
+    "usr/lib/bili-groups/digest_view.py": {
+      "src": "lib/digest_view.py"
+    },
+    "usr/lib/bili-groups/fetch_content.py": {
+      "src": "lib/fetch_content.py"
+    },
+    "usr/lib/bili-groups/review_view.py": {
+      "src": "lib/review_view.py"
+    }
+  },
+  "notes": "脚本来自群友 chenshi723 的一键安装包 bili-mcp-install.sh（作者授权以 Apache-2.0 收录）。相对原版只改了三处：数据目录从脚本旁的 data/ 挪到 ~/.bili-groups/data（可用 BILI_GROUPS_DATA 改）；cookie 文件一开始就以 0600 建；登录失败时不再把 cookie 值打出来。原版自己改写 ~/.claude.json 注册 MCP，这里改由 App 按 mcp 字段注册。"
+}
