@@ -1,0 +1,354 @@
+#!{{PREFIX}}/bin/python3
+"""ccbackup：restic 的安全包装（远程后端、密码文件、初始化/校验/恢复）。
+
+仓库里的 shebang 是占位符，打包时替换成真实前缀；在仓库里调试请用
+python3 -I recipes/backup/bin/ccbackup …。
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+PREFIX = os.environ.get("PREFIX") or sys.prefix
+BIN = os.path.join(PREFIX, "bin")
+HOME = os.environ.get("CCBACKUP_HOME") or os.path.join(
+    os.path.expanduser("~"), ".cccodroid", "backup")
+CONFIG = os.path.join(HOME, "repo")
+
+
+def die(msg, code=2):
+    sys.stderr.write("ccbackup: " + msg + "\n")
+    raise SystemExit(code)
+
+
+def tool(name):
+    path = os.path.join(BIN, name)
+    if not (os.path.isfile(path) and os.access(path, os.X_OK)):
+        die("找不到 %s（%s）——组件没装好？" % (name, path))
+    return path
+
+
+def saved_repo():
+    try:
+        with open(CONFIG, encoding="utf-8") as f:
+            return f.read().strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def save_repo(repo):
+    os.makedirs(HOME, exist_ok=True)
+    with open(CONFIG, "w", encoding="utf-8") as f:
+        f.write(repo + "\n")
+    os.chmod(CONFIG, 0o600)
+
+
+def resolve_repo(cli_repo, required=True):
+    repo = cli_repo or os.environ.get("CCBACKUP_REPO") or saved_repo()
+    if not repo:
+        repo = os.path.join(HOME, "repo")
+    if required and not repo:
+        die("还没配置仓库：先运行 ccbackup init --repo <本地路径或 sftp:/s3:…>")
+    return repo
+
+
+def password_env():
+    """只把密码文件的路径交给 restic；绝不读取、打印文件内容。"""
+    env = os.environ.copy()
+    if env.get("RESTIC_PASSWORD_COMMAND"):
+        return env
+    pf = (env.get("CCBACKUP_PASSWORD_FILE") or env.get("RESTIC_PASSWORD_FILE")
+          or os.path.join(HOME, "password"))
+    if not os.path.isfile(pf):
+        die("密码文件不存在：%s\n"
+            "请用户自己创建（不要由 Claude 代写或读取密码）：\n"
+            "  mkdir -p %s && umask 077 && printf '%%s' '你的密码' > %s\n"
+            "也可以设置 RESTIC_PASSWORD_FILE 指向已有密码文件。"
+            % (pf, HOME, pf))
+    env["RESTIC_PASSWORD_FILE"] = pf
+    env.pop("RESTIC_PASSWORD", None)
+    return env
+
+
+def run(cmd, env=None, capture=False, cwd=None):
+    p = subprocess.run(cmd, env=env, text=True, errors="replace", cwd=cwd,
+                       stdout=subprocess.PIPE if capture else None,
+                       stderr=subprocess.STDOUT if capture else None)
+    return p.returncode, (p.stdout or "")
+
+
+def restic(repo, args, env, capture=False, cwd=None):
+    return run([tool("restic"), "-r", repo, *args], env=env, capture=capture, cwd=cwd)
+
+
+def cmd_init(args):
+    repo = resolve_repo(args.repo)
+    env = password_env()
+    if not (repo.startswith(("sftp:", "s3:", "b2:", "azure:", "gs:", "rest:",
+                             "rclone:", "swift:", "http:", "https:"))):
+        parent = os.path.dirname(os.path.abspath(repo))
+        os.makedirs(parent, exist_ok=True)
+    code, out = restic(repo, ["init"], env)
+    if out:
+        sys.stdout.write(out)
+    if code != 0:
+        return code
+    save_repo(repo)
+    sys.stdout.write("ccbackup: 仓库已初始化并记录到 %s\n" % CONFIG)
+    return 0
+
+
+def cmd_backup(args):
+    repo = resolve_repo(None)
+    env = password_env()
+
+    # 安卓上 restic 用绝对路径会去读 /data/user/0 的 user.serial 扩展属性，
+    # 普通应用没有权限，退出码 3（快照其实已建）。改成 chdir 到父目录、
+    # 只传 basename，路径里就不会出现 /data/user/0，xattr 错误消失。
+    groups = {}
+    for raw in args.paths:
+        path = os.path.normpath(os.path.abspath(raw))
+        if path == os.path.sep:
+            die("不建议备份整个 /；请传具体文件或目录")
+        if not os.path.exists(path):
+            die("路径不存在: " + raw)
+        parent, name = os.path.split(path)
+        if not name:
+            die("路径不能用: " + raw)
+        groups.setdefault(parent, []).append(name)
+
+    if len(groups) > 1:
+        sys.stderr.write("ccbackup: 这些路径的父目录不同，会分成 %d 个快照。\n" % len(groups))
+
+    rc = 0
+    for parent, names in groups.items():
+        restic_args = ["backup"]
+        if args.tag:
+            restic_args += ["--tag", args.tag]
+        if args.dry_run:
+            restic_args.append("--dry-run")
+        restic_args += sorted(set(names))
+        code, out = restic(repo, restic_args, env, cwd=parent)
+        if out:
+            sys.stdout.write(out)
+        if code != 0:
+            rc = code
+    return rc
+
+
+def cmd_snapshots(args):
+    repo = resolve_repo(None)
+    env = password_env()
+    restic_args = ["snapshots"]
+    if args.json:
+        restic_args.append("--json")
+    code, out = restic(repo, restic_args, env, capture=True)
+    sys.stdout.write(out)
+    return code
+
+
+def cmd_check(args):
+    repo = resolve_repo(None)
+    env = password_env()
+    restic_args = ["check"]
+    if args.read_data:
+        restic_args.append("--read-data")
+    code, out = restic(repo, restic_args, env)
+    if out:
+        sys.stdout.write(out)
+    return code
+
+
+def cmd_restore(args):
+    repo = resolve_repo(None)
+    env = password_env()
+    restic_args = ["restore", args.snapshot, "--target", args.target]
+    if args.include:
+        for item in args.include:
+            restic_args += ["--include", item]
+    code, out = restic(repo, restic_args, env)
+    if out:
+        sys.stdout.write(out)
+    return code
+
+
+def cmd_forget(args):
+    repo = resolve_repo(None)
+    env = password_env()
+    restic_args = ["forget", "--keep-last", str(args.keep_last)]
+    if args.prune:
+        restic_args.append("--prune")
+    code, out = restic(repo, restic_args, env)
+    if out:
+        sys.stdout.write(out)
+    return code
+
+
+def sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def find_file(root, name):
+    for dirpath, _dirnames, filenames in os.walk(root):
+        if name in filenames:
+            return os.path.join(dirpath, name)
+    return None
+
+
+def selftest():
+    import random
+    import string
+
+    tmp = tempfile.mkdtemp(prefix="ccbackup-", dir=os.environ.get("TMPDIR") or None)
+    try:
+        repo = os.path.join(tmp, "repo")
+        pw = os.path.join(tmp, "password")
+        with open(pw, "w", encoding="utf-8") as f:
+            # selftest 自己的临时密码，只在这个临时仓库里用，不打印。
+            f.write("selftest-" + "".join(random.choice(string.ascii_letters) for _ in range(24)))
+        os.chmod(pw, 0o600)
+
+        home = os.path.join(tmp, "home")
+        env = os.environ.copy()
+        env.update({"CCBACKUP_HOME": home, "RESTIC_PASSWORD_FILE": pw,
+                    "CCBACKUP_REPO": repo})
+
+        script = os.path.abspath(__file__)
+
+        def cc(*args, capture=True):
+            return run([sys.executable, script, *args], env=env, capture=capture)
+
+        data = os.path.join(tmp, "data.bin")
+        with open(data, "wb") as f:
+            f.write(os.urandom(32768))
+        digest = sha256(data)
+
+        for args in (["init"], ["backup", data, "--tag", "selftest"]):
+            code, out = cc(*args)
+            if code != 0:
+                sys.stderr.write("selftest 失败：ccbackup %s → %d\n%s\n" %
+                                 (" ".join(args), code, out))
+                return 1
+
+        code, out = cc("snapshots", capture=True)
+        if code != 0 or "selftest" not in out:
+            sys.stderr.write("selftest 失败：snapshots 没看到 selftest 快照\n%s\n" % out)
+            return 1
+
+        restore_dir = os.path.join(tmp, "restore")
+        code, out = cc("restore", "latest", "--target", restore_dir)
+        if code != 0:
+            sys.stderr.write("selftest 失败：restore → %d\n%s\n" % (code, out))
+            return 1
+        restored = find_file(restore_dir, "data.bin")
+        if not restored or sha256(restored) != digest:
+            sys.stderr.write("selftest 失败：恢复出来的文件不一致\n")
+            return 1
+
+        code, out = cc("check", "--read-data")
+        if code != 0:
+            sys.stderr.write("selftest 失败：check → %d\n%s\n" % (code, out))
+            return 1
+
+        # age：生成临时密钥，加密/解密一个文件
+        age = tool("age")
+        age_keygen = tool("age-keygen")
+        key = os.path.join(tmp, "age.key")
+        code, out = run([age_keygen, "-o", key], capture=True)
+        if code != 0:
+            sys.stderr.write("selftest 失败：age-keygen\n%s\n" % out)
+            return 1
+        code, out = run([age_keygen, "-y", key], capture=True)
+        if code != 0 or not out.strip():
+            sys.stderr.write("selftest 失败：age-keygen -y\n%s\n" % out)
+            return 1
+        recipient = out.strip().splitlines()[-1]
+        enc = os.path.join(tmp, "data.age")
+        dec = os.path.join(tmp, "data.dec")
+        code, out = run([age, "-r", recipient, "-o", enc, data], capture=True)
+        if code != 0:
+            sys.stderr.write("selftest 失败：age 加密\n%s\n" % out)
+            return 1
+        code, out = run([age, "-d", "-i", key, "-o", dec, enc], capture=True)
+        if code != 0 or sha256(dec) != digest:
+            sys.stderr.write("selftest 失败：age 解密不一致\n%s\n" % out)
+            return 1
+
+        # rsync：本地目录同步
+        src = os.path.join(tmp, "rsync-src")
+        dst = os.path.join(tmp, "rsync-dst")
+        os.makedirs(src)
+        with open(os.path.join(src, "hello.txt"), "w", encoding="utf-8") as f:
+            f.write("rsync selftest\n")
+        code, out = run([tool("rsync"), "-a", src + "/", dst + "/"], capture=True)
+        if code != 0 or not os.path.isfile(os.path.join(dst, "hello.txt")):
+            sys.stderr.write("selftest 失败：rsync\n%s\n" % out)
+            return 1
+
+        print("ccbackup 0.1.0 selftest")
+        for name, flag in (("restic", "version"), ("age", "--version"), ("rsync", "--version")):
+            code, out = run([tool(name), flag], capture=True)
+            first = (out.strip().splitlines() or [name])[0]
+            print("  %-8s %s" % (name, first))
+        print("===== 总结 ===== restic=OK age=OK rsync=OK repo=PASS restore=PASS")
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(
+        prog="ccbackup",
+        description="restic 包装：仓库初始化、备份、校验、恢复（非交互）")
+    sub = ap.add_subparsers(dest="cmd")
+
+    p = sub.add_parser("init", help="初始化仓库并记住地址")
+    p.add_argument("--repo", help="本地路径或 restic 仓库 URL；默认 %s" % os.path.join(HOME, "repo"))
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("backup", help="备份文件/目录")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--tag", default="ccbackup")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_backup)
+
+    p = sub.add_parser("snapshots", help="列快照")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_snapshots)
+
+    p = sub.add_parser("check", help="校验仓库")
+    p.add_argument("--read-data", action="store_true", help="连数据一起校验（慢，但更可靠）")
+    p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("restore", help="恢复快照到目录")
+    p.add_argument("snapshot", help="快照 id 或 latest")
+    p.add_argument("--target", required=True)
+    p.add_argument("--include", action="append", help="只恢复匹配的路径，可重复")
+    p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("forget", help="按保留数清理旧快照")
+    p.add_argument("--keep-last", type=int, required=True)
+    p.add_argument("--prune", action="store_true", help="同时回收空间（慢）")
+    p.set_defaults(func=cmd_forget)
+
+    sub.add_parser("selftest", help="组件自检")
+
+    args = ap.parse_args(argv)
+    if args.cmd == "selftest":
+        return selftest()
+    if not getattr(args, "func", None):
+        ap.print_help()
+        return 0
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
