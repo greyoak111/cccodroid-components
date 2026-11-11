@@ -1,0 +1,62 @@
+#!{{PREFIX}}/bin/python3
+# pandas 自检：DataFrame、groupby、缺失值、CSV 往返；numpy 随组件一起装。
+# 不联网，不读用户文件，只写 $TMPDIR。
+import os
+import shutil
+import sys
+import tempfile
+
+# 隔离模式：不吃用户 site-packages，确保检查的是组件装出来的环境。
+if not sys.flags.isolated:
+    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+
+
+def fail(msg):
+    print("✗ " + msg, file=sys.stderr)
+    sys.exit(1)
+
+
+try:
+    import numpy as np
+except ImportError:
+    fail("找不到 numpy：组件没装完整，请重装")
+
+try:
+    import pandas as pd
+except ImportError as e:
+    fail("找不到 pandas：%s" % e)
+
+tmp = tempfile.mkdtemp(prefix="pandas-selftest-", dir=os.environ.get("TMPDIR") or None)
+try:
+    df = pd.DataFrame({
+        "name": ["alice", "bob", "carol", "dave"],
+        "group": ["a", "a", "b", "b"],
+        "value": [3, 5, 7, 11],
+    })
+    sums = df.groupby("group")["value"].sum().to_dict()
+    if sums != {"a": 8, "b": 18}:
+        fail("groupby 结果异常：%r" % sums)
+
+    s = pd.Series([1, None, 3])
+    if int(s.isna().sum()) != 1 or int(s.sum()) != 4:
+        fail("缺失值处理异常：isna=%r sum=%r" % (s.isna().sum(), s.sum()))
+
+    csv = os.path.join(tmp, "t.csv")
+    df.to_csv(csv, index=False)
+    back = pd.read_csv(csv)
+    if list(back.columns) != ["name", "group", "value"] or len(back) != 4:
+        fail("CSV 往返异常：columns=%r rows=%d" % (list(back.columns), len(back)))
+    if int(back["value"].sum()) != 26:
+        fail("CSV 往返后 value 合计异常：%r" % back["value"].sum())
+
+    dates = pd.date_range("2026-01-01", periods=3, freq="D")
+    if len(dates) != 3 or str(dates[0].date()) != "2026-01-01":
+        fail("date_range 异常：%r" % dates)
+
+    print("pandas selftest")
+    print("  pandas %s" % pd.__version__)
+    print("  numpy  %s" % np.__version__)
+    print("===== 总结 ===== pandas=%s numpy=%s groupby=PASS csv=PASS" %
+          (pd.__version__, np.__version__))
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)

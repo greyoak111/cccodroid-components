@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "id": "pandas",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "pandas 数据分析",
+    "en": "pandas data analysis"
+  },
+  "desc": {
+    "zh": "在设备上用 pandas 处理表格数据：读写 CSV/Excel/Parquet、筛选、分组聚合、缺失值、日期索引。自带 numpy，不依赖其他组件；适合中低数据量的清洗和分析。",
+    "en": "Work with tabular data on the device using pandas: read/write CSV/Excel/Parquet, filter, group and aggregate, handle missing values and date indexes. numpy is bundled, so it has no component dependencies; suitable for small to medium datasets."
+  },
+  "roots": ["python-pandas"],
+  "pip": {
+    "why": "pandas 的纯 Python 依赖 python-dateutil / six（Termux 仓库没有）；不打进来的话 postinst 会去 PyPI 现场拉，CI 的 PIP_NO_INDEX=1 自检和离线安装都会失败",
+    "wheels": [
+      { "url": "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", "sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427" },
+      { "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274" }
+    ]
+  },
+  "bin": ["python3"],
+  "selftest": "pandas-selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "science",
+  "license": "BSD-3-Clause",
+  "homepage": "https://pandas.pydata.org/",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/pandas-selftest": { "src": "bin/pandas-selftest", "mode": "755" }
+  },
+  "notes": "python-pandas 3.1.1（Termux main）。numpy 2.5.4 随组件一起打（装后约 58 MB + 22 MB），组件自包含，不依赖 sci-python；这样 CI 自检和用户安装都不受其他组件状态影响。selftest 用 python3 -I 建 DataFrame、groupby、CSV 往返，并检查 numpy 可用；不联网、只写 $TMPDIR。"
+}
