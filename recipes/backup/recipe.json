@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "backup",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "备份与同步（restic + age + rsync）",
+    "en": "Backup and sync (restic + age + rsync)"
+  },
+  "desc": {
+    "zh": "用 restic 做加密、去重的增量备份（本地、SFTP、S3 等），age 加密单个文件，rsync 做本地/SSH 同步。带 ccbackup 包装：初始化仓库、备份、校验、恢复、清理旧快照；密码只由用户自己保存。",
+    "en": "Encrypted, deduplicated incremental backups with restic (local, SFTP, S3 and more), file encryption with age, and local/SSH sync with rsync. The ccbackup wrapper covers init, backup, check, restore and forget; the password stays with the user."
+  },
+  "roots": ["restic", "age", "rsync"],
+  "bin": ["ccbackup", "restic", "age", "rsync"],
+  "selftest": "ccbackup selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "net",
+  "license": "BSD-2-Clause AND BSD-3-Clause AND GPL-3.0-or-later",
+  "homepage": "https://restic.net",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/ccbackup": { "src": "bin/ccbackup", "mode": "755" }
+  },
+  "notes": "restic 0.19.1、age 1.3.2、rsync 3.5.2（Termux main）。ccbackup 是 Python 包装，只用标准库；密码文件由用户创建，包装只把路径交给 restic，不读内容。安卓上 restic 用绝对路径会读 /data/user/0 的 user.serial 扩展属性并返回 3，包装改成 chdir 到父目录、传 basename；多个父目录会分成多个快照，skill 里写明。selftest 在 $TMPDIR 建临时仓库，跑 init→backup→snapshots→restore→check --read-data，再验 age 加解密和 rsync 同步。"
+}
