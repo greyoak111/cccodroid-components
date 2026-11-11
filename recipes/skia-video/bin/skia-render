@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""skia-render 启动器：找到同目录树里的 skia_render.py 再交给它。"""
+#!{{PREFIX}}/bin/python3
+"""skia-render 启动器：找到同目录树里的 skia_render.py 再交给它。
+
+仓库里的 shebang 是占位符，打包时由 devkit 替换成真实前缀；
+在仓库里直接跑请用 python3 -I bin/skia-render …。
+"""
 import os
 import sys
 
