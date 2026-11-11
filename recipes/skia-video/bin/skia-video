@@ -1,0 +1,23 @@
+#!{{PREFIX}}/bin/python3
+"""skia-video 启动器：等价于 skia-render video …"""
+import os
+import sys
+
+here = os.path.dirname(os.path.realpath(__file__))
+cands = [
+    os.environ.get("SKIA_RENDER_HOME"),
+    os.path.normpath(os.path.join(here, "..", "share", "cccodroid", "components", "skia-video")),
+    os.path.normpath(os.path.join(here, "..", "lib")),
+]
+mod_dir = None
+for d in cands:
+    if d and os.path.isfile(os.path.join(d, "skia_render.py")):
+        mod_dir = d
+        break
+if not mod_dir:
+    sys.stderr.write("skia-video: 找不到 skia_render.py（组件没装好？）\n")
+    sys.exit(1)
+sys.path.insert(0, mod_dir)
+import skia_render  # noqa: E402
+
+sys.exit(skia_render.main(["video"] + sys.argv[1:]))

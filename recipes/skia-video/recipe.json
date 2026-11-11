@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "id": "skia-video",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "Skia 视频帧渲染（ffmpeg 合成）",
+    "en": "Skia video frame renderer (ffmpeg compositing)"
+  },
+  "desc": {
+    "zh": "用 Skia 2D 引擎逐帧绘制文字、图形、图片和关键帧动画，配合底座的 ffmpeg 生成视频、在现有视频上叠加图层，或导出 PNG 静帧/序列。",
+    "en": "Draw text, shapes, images and keyframed animation with Skia, then use the bundled ffmpeg to generate video, overlay layers on existing video, or export stills and PNG sequences."
+  },
+  "roots": [
+    "libskiasharp",
+    "python"
+  ],
+  "bin": [
+    "skia-render",
+    "skia-video"
+  ],
+  "selftest": "skia-render selftest",
+  "needs": {
+    "shizuku": false,
+    "display": false,
+    "gpu": false
+  },
+  "category": "media",
+  "license": "BSD-3-Clause AND MIT",
+  "homepage": "https://skia.org",
+  "files": {
+    "usr/bin/skia-render": {
+      "src": "bin/skia-render",
+      "mode": "755"
+    },
+    "usr/bin/skia-video": {
+      "src": "bin/skia-video",
+      "mode": "755"
+    },
+    "usr/share/cccodroid/components/skia-video/skia_render.py": {
+      "src": "lib/skia_render.py",
+      "mode": "644"
+    },
+    "usr/share/cccodroid/components/skia-video/examples/scene.json": {
+      "src": "examples/scene.json",
+      "mode": "644"
+    }
+  },
+  "maintainers": [
+    "greyoak111"
+  ]
+}
