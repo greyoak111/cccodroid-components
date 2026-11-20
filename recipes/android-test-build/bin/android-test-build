@@ -256,6 +256,18 @@ def cmd_selftest(_args):
                       str(tmp / "selftest" / "TestActivity.class")], capture=True)
         if result.returncode:
             die("d8 selftest failed:\\n" + (result.stdout or "")[-2000:], 1)
+        dex = dex_dir / "classes.dex"
+        if "Lselftest/TestActivity;" not in dex_classes(dex.read_bytes()):
+            die("selftest class not found in generated DEX", 1)
+
+        framework = Path("/system/framework/framework-res.apk")
+        try:
+            framework.stat()
+        except FileNotFoundError:
+            print("Android framework-res.apk not found; skipping APK linking, signing, verification and inspection. Run on an Android device for the full selftest.")
+            print("===== 总结 ===== aapt2=SKIP dex=OK test-sign=SKIP signature-verify=SKIP inspect=SKIP")
+            return 0
+
         manifest = tmp / "AndroidManifest.xml"
         manifest.write_text(
             '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
@@ -263,13 +275,12 @@ def cmd_selftest(_args):
             '<activity android:name="selftest.TestActivity"/></application></manifest>',
             encoding="utf-8")
         apk = tmp / "selftest.apk"
-        result = run([tool("aapt2"), "link", "-I", "/system/framework/framework-res.apk",
+        result = run([tool("aapt2"), "link", "-I", str(framework),
                       "--manifest", str(manifest), "--min-sdk-version", "21", "-o", str(apk)], capture=True)
         if result.returncode:
             die("aapt2 selftest failed:\\n" + (result.stdout or "")[-2000:], 1)
-        import zipfile as _zipfile
-        with _zipfile.ZipFile(apk, "a") as zf:
-            zf.write(dex_dir / "classes.dex", "classes.dex")
+        with zipfile.ZipFile(apk, "a") as zf:
+            zf.write(dex, "classes.dex")
         test_state = tmp / "state"
         test_state.mkdir(mode=0o700)
         previous_state = os.environ.get("ANDROID_TEST_BUILD_STATE")

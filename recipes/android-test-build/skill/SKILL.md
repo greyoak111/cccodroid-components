@@ -13,7 +13,9 @@ description: 在 cccodroid 手机上为自己开发或明确获授权的 Gradle 
 android-test-build selftest
 ```
 
-最后一行应为 `===== 总结 ===== aapt2=OK dex=OK test-sign=OK signature-verify=OK inspect=OK`。它在 `$TMPDIR` 中生成最小 APK 和临时密钥，实测 DEX、aapt2、签名、验签与检查链路，不需要网络、不读取项目或用户密钥。
+真机自检在 `$TMPDIR` 中生成最小 APK 和临时密钥，实测 DEX、aapt2 链接、签名、验签与检查链路。完整通过时最后一行是 `===== 总结 ===== aapt2=OK dex=OK test-sign=OK signature-verify=OK inspect=OK`。自检不需要网络，也不读取项目或用户密钥。
+
+容器缺少 `/system/framework/framework-res.apk` 时，仍会编译 Java 并核对生成的 DEX 类；这部分通过后，APK 链接、签名、验签和检查会标记为 `SKIP`，退出码为 `0`。`SKIP` 不算完整验证，仍需在真机上跑全套。
 
 ## 运行链路
 

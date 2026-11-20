@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "android-test-build",
   "kind": "termux",
-  "revision": 2,
+  "revision": 1,
   "name": {
     "zh": "安卓测试构建",
     "en": "Android test build"
@@ -23,5 +23,5 @@
   "files": {
     "usr/bin/android-test-build": { "src": "bin/android-test-build", "mode": "755" }
   },
-  "notes": "复用 android-build 组件与底座的 JDK 21、aapt2、d8、apksigner。测试密钥仅保存在用户私有目录（默认 ~/.cccodroid/test-build），权限 0600；不输出密钥内容，不读取或改写项目 release 密钥。构建前需在项目构建脚本中配置测试 applicationId/manifest package；本工具检查最终 APK 身份与组件类名，不自动重写工程。selftest 在 $TMPDIR 生成最小 APK、临时密钥并实测 DEX 检查、签名和验签。"
+  "notes": "复用 android-build 组件与底座的 JDK 21、aapt2、d8、apksigner。测试密钥仅保存在用户私有目录（默认 ~/.cccodroid/test-build），权限 0600；不输出密钥内容，不读取或改写项目 release 密钥。构建前需在项目构建脚本中配置测试 applicationId/manifest package；本工具检查最终 APK 身份与组件类名，不自动重写工程。selftest 在 $TMPDIR 检查生成的 DEX；真机继续生成最小 APK、签名并验签，容器缺少系统框架文件时明确跳过 APK 相关步骤。"
 }
