@@ -31,7 +31,7 @@ gdalinfo / gdal_translate / gdalwarp / gdaltransform / gdalsrsinfo / ogrinfo / o
        ├─ 格式驱动 + share/gdal  本组件（GDAL_DATA 编译进去的路径）
        ├─ PROJ（libproj + proj.db）      本组件（gdal 依赖 proj）
        ├─ xerces-c → libicu*.so.79      **底座**（devkit-2026.11.21+）
-       ├─ postgresql/libpq → libicu*.so.79  **底座**
+       ├─ libpq（PostGIS 驱动用，不含服务器）  本组件
        └─ libcurl / libsqlite / libpng / libtiff / libjpeg…  本组件或底座
 
 输入输出数据由用户提供，组件不碰用户目录。
