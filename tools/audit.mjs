@@ -231,12 +231,22 @@ for (const id of ids) {
         glibc ? "usr/glibc/lib" : "usr/lib", dirOf(e.name)].map((p) => path.posix.normalize(p.replace(/^\//, "")));
       const node = { exe: !!info.interp, deps: [] };
       elfGraph.set(e.name, node);
-      for (const n of info.needed) {
-        if (!glibc && ANDROID_LIBS.has(n)) continue;
-        const hit = dirs.find((d) => has(d + "/" + n));
-        if (hit) { if (b.names.has(hit + "/" + n)) node.deps.push(hit + "/" + n); continue; }
-        if (!glibc && VENDOR_LIBS.has(n)) { vendor.set(n, [...(vendor.get(n) || []), e.name]); continue; }
-        (anywhere.has(n) ? offPath : missing).set(n, [...((anywhere.has(n) ? offPath : missing).get(n) || []), e.name]);
+      for (const n0 of info.needed) {
+        // Termux 的 proj 等包会把 DT_NEEDED 写成绝对路径（/data/data/com.termux/files/usr/lib/libsqlite3.so，
+        // 改写前缀后是 /data/data/cc.codroid/files/usr/lib/libsqlite3.so）：先换算成 usr/… 再查，
+        // 别把它当成"哪里都找不到"。绝对路径不在应用前缀里的照旧按原样报。
+        const abs = n0.startsWith("/");
+        const n = abs ? rel(n0) : n0;
+        const bn = path.posix.basename(n);
+        if (!glibc && (ANDROID_LIBS.has(n) || (abs && ANDROID_LIBS.has(bn)))) continue;
+        if (abs) {
+          if (has(n)) { if (b.names.has(n)) node.deps.push(n); continue; }
+        } else {
+          const hit = dirs.find((d) => has(d + "/" + n));
+          if (hit) { if (b.names.has(hit + "/" + n)) node.deps.push(hit + "/" + n); continue; }
+        }
+        if (!glibc && (VENDOR_LIBS.has(n) || (abs && VENDOR_LIBS.has(bn)))) { vendor.set(n, [...(vendor.get(n) || []), e.name]); continue; }
+        (anywhere.has(bn) ? offPath : missing).set(n, [...((anywhere.has(bn) ? offPath : missing).get(n) || []), e.name]);
       }
     } else if (head[0] === 0x23 && head[1] === 0x21 && e.mode & 0o111) {
       const interp = head.toString("latin1", 2, 200).split("\n")[0].trim().split(/\s+/)[0];
