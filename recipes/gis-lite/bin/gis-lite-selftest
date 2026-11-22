@@ -1,0 +1,51 @@
+#!{{PREFIX}}/bin/sh
+# gis-lite 自检：PROJ 坐标转换、GEOS 几何运算、SpatiaLite 空间 SQL。
+# 不联网、不写用户文件；临时文件在 $TMPDIR，结束即删。
+set -u
+PREFIX="{{PREFIX}}"
+tmp="${TMPDIR:-$PREFIX/tmp}/gis-lite-selftest.$$"
+mkdir -p "$tmp" || { echo "✗ 建不了临时目录 $tmp"; exit 1; }
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+fail=0
+bad() { printf '✗ %s\n' "$*"; fail=1; }
+
+# 1) PROJ：WGS84 经纬度 → UTM 50N。传统 GIS 顺序：经度在前。
+out=$(printf '116.4 39.9\n' | "$PREFIX/bin/proj" +proj=utm +zone=50 +datum=WGS84 2>"$tmp/proj.err")
+if [ $? -ne 0 ] || [ -z "$out" ]; then
+  bad "proj 转换失败：$(cat "$tmp/proj.err" 2>/dev/null)"
+else
+  x=$(printf '%s\n' "$out" | awk '{print $1}')
+  y=$(printf '%s\n' "$out" | awk '{print $2}')
+  # 北京 116.4E 39.9N 在 UTM 50N 约为 44.8 万 / 441.8 万（留 2 万米余量）
+  if awk -v x="$x" -v y="$y" 'BEGIN{exit !(x>430000 && x<465000 && y>4380000 && y<4450000)}'; then
+    echo "PROJ: OK  (116.4,39.9) -> UTM 50N ($x, $y)"
+  else
+    bad "proj 结果不像 UTM 50N：$out"
+  fi
+fi
+
+# 2) GEOS：2×2 正方形面积应为 4。
+area=$("$PREFIX/bin/geosop" -a "POLYGON((0 0,0 2,2 2,2 0,0 0))" area 2>"$tmp/geos.err")
+if [ $? -eq 0 ] && [ "$area" = "4" ]; then
+  echo "GEOS: OK  (2x2 polygon area=$area)"
+else
+  bad "geosop 面积计算失败（得到 '$area'）：$(cat "$tmp/geos.err" 2>/dev/null)"
+fi
+
+# 3) SpatiaLite：经 sqlite3 加载 mod_spatialite，做一次真实的空间运算。
+sv=$("$PREFIX/bin/spatialite" :memory: \
+  "SELECT spatialite_version(); SELECT ROUND(ST_Area(ST_Buffer(ST_Point(0,0), 1)), 2);" 2>"$tmp/spatialite.err")
+rc=$?
+ver=$(printf '%s\n' "$sv" | sed -n 1p)
+bufarea=$(printf '%s\n' "$sv" | sed -n 2p)
+if [ $rc -eq 0 ] && [ -n "$ver" ] && [ "$bufarea" = "3.14" ]; then
+  echo "SpatiaLite: OK  (version=$ver, buffer area=$bufarea)"
+else
+  bad "mod_spatialite 加载或空间运算失败（rc=$rc，输出 '$(printf '%s' "$sv" | tr '\n' ' ')'）：$(cat "$tmp/spatialite.err" 2>/dev/null)"
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "===== 总结 ===== gis-lite FAIL"
+  exit 1
+fi
+echo "===== 总结 ===== PROJ=OK GEOS=OK SpatiaLite=$ver"

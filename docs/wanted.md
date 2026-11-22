@@ -32,6 +32,14 @@
 
 能跑：qemu-system-x86-64-headless 11.1.2 + Alpine virt ISO，串口登录、端口转发、SSH 都通。但装后 409 MB + 66 MB ISO，启动约 37 秒，速度约本机的 1/4。维护者判断不值得，真有需要的人可以接手。
 
+### 已收录为组件
+
+下面这些原来在清单里，2026-11 已经做成组件（配方在本仓库，装后自带 skill）：
+
+- `gis-lite`（#90）：PROJ + GEOS + SpatiaLite。坐标转换/投影、几何运算、SQLite 空间扩展；不依赖 libicu。
+- `gis`（#85）：GDAL 3.13。栅格/矢量格式转换、坐标转换；需要工具包 devkit-2026.11.21 或更新（libicu 79.1）。
+- `kiwix`（#84）：kiwix-tools 3.8.2。离线 ZIM 知识库服务与检索；需要 devkit-2026.11.21 或更新。
+
 ### 只有设想、没实测的
 
 | id | 内容 | 要先弄清的 |
@@ -41,13 +49,11 @@
 | `databases` | PostgreSQL + Valkey 本机服务 | 同上的常驻进程问题；数据目录放 `~/.cccodroid/databases/` |
 | `photo-tools` | libvips、exiftool、libraw、potrace、G'MIC | 和底座 ImageMagick 的分工；分享前去 GPS |
 | `math` | Maxima、PARI/GP、gnuplot、Z3 + SymPy（配方 `pip`） | gnuplot 中文标题 |
-| `gis` | GDAL + PROJ | GCJ-02 偏移 PROJ 不管，要写明 |
 | `backup` | restic，后端借 `rclone` 组件 | 密码只让用户自己输 |
 | `ml-onnx` | onnxruntime + OpenCV 端上推理 | 先量体积；模型许可证要能再分发 |
 | `video-edit` | MLT（melt）无头剪辑 | 比直接写 ffmpeg 好在哪；体积 |
 | `dotnet` | .NET SDK（`linux-arm64`） | **Termux `main`/`glibc` 仓库里目前没有 `dotnet`（`pkg install` 不可用）**；若做成组件需走 `kind: "glibc"` + `fetch`（`extract`）拉取微软官方 `linux-arm64` 归档，先评估解包体积、ICU 依赖与 `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT` / 许可证 |
 | `docsearch` | 在 PDF 等文档里全文搜索：pdfgrep + ripgrep-all（rga） | rga 是 AGPL-3.0-or-later；和已有的 `pdf-tools`（已含 poppler、qpdf）怎么分工，别重复打包 |
-| `kiwix` | kiwix-tools：本机开离线知识库（维基百科等 ZIM 文件）服务 | 自检需要一个能再分发的小 ZIM；ZIM 本体由用户自己下 |
 | `recoll` | Recoll 全文索引，中文走 CJK n-gram | Termux 包只有 `recollindex`，没有查询命令，要用 recoll-python 写一个查询包装脚本 |
 | `tiddlywiki` | TiddlyWiki 个人笔记维基（npm，约 37 MB） | 配方走 npm，要钉版本和完整性哈希 |
 
@@ -96,6 +102,14 @@ Tested 2026-10-19 (Gradle 9.8.1 / JDK 21 / AGP 9.4.1 / compileSdk 36):
 
 It works: qemu-system-x86-64-headless 11.1.2 with the Alpine virt ISO; serial login, port forwarding and SSH all tested. But it's 409 MB installed plus a 66 MB ISO, boots in about 37 s and runs at about a quarter of native speed. The maintainer decided it isn't worth it; take it on if you need it.
 
+### Now components
+
+These were on the list and became components in 2026-11 (recipes live in this repo; each ships a skill):
+
+- `gis-lite` (#90): PROJ + GEOS + SpatiaLite — coordinate transforms/projections, geometry operations and SQLite's spatial extension. Does not need libicu.
+- `gis` (#85): GDAL 3.13 — raster/vector format conversion and coordinate transforms. Needs devkit-2026.11.21 or newer (libicu 79.1).
+- `kiwix` (#84): kiwix-tools 3.8.2 — offline ZIM knowledge bases and search. Needs devkit-2026.11.21 or newer.
+
 ### Ideas, not yet tested
 
 | id | What | Find out first |
@@ -105,13 +119,11 @@ It works: qemu-system-x86-64-headless 11.1.2 with the Alpine virt ISO; serial lo
 | `databases` | Local PostgreSQL + Valkey | The same long-running-process question; data under `~/.cccodroid/databases/` |
 | `photo-tools` | libvips, exiftool, libraw, potrace, G'MIC | Division of labour with ImageMagick in the base; strip GPS before sharing |
 | `math` | Maxima, PARI/GP, gnuplot, Z3 + SymPy (recipe `pip`) | Chinese titles in gnuplot |
-| `gis` | GDAL + PROJ | PROJ doesn't handle the GCJ-02 offset; say so |
 | `backup` | restic, with the `rclone` component as a backend | Only the user types passwords |
 | `ml-onnx` | onnxruntime + OpenCV on-device inference | Measure the size first; model licenses must allow redistribution |
 | `video-edit` | MLT (melt) headless editing | What it does better than plain ffmpeg; size |
 | `dotnet` | .NET SDK (`linux-arm64`) | **Not available in Termux `main`/`glibc` (`pkg install dotnet` does not exist)**; a component would need `kind: "glibc"` + `fetch` (`extract`) of Microsoft's official `linux-arm64` tarball — evaluate unpacked size, ICU dependency, and license first |
 | `docsearch` | Full-text search inside PDFs and other documents: pdfgrep + ripgrep-all (rga) | rga is AGPL-3.0-or-later; split the work with the existing `pdf-tools` (which already has poppler and qpdf) instead of packaging them twice |
-| `kiwix` | kiwix-tools: serve offline knowledge bases (Wikipedia etc. as ZIM files) locally | The self-test needs a small redistributable ZIM; users download the real ZIMs themselves |
 | `recoll` | Recoll full-text indexing, with CJK n-grams for Chinese | The Termux package only has `recollindex`, no query command; a query wrapper has to be written with recoll-python |
 | `tiddlywiki` | TiddlyWiki personal notes wiki (npm, about 37 MB) | npm recipe; pin the version and integrity hash |
 

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "gis",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "GIS（GDAL）",
+    "en": "GIS (GDAL)"
+  },
+  "desc": {
+    "zh": "GDAL 3.13 命令行：gdalinfo / gdal_translate / gdalwarp / gdaltransform / gdalsrsinfo 处理栅格，ogrinfo / ogr2ogr 处理矢量，含 GeoTIFF、GeoJSON、Shapefile、PostGIS 等格式驱动。坐标转换由 PROJ 完成；国内地图的 GCJ-02 偏移不处理。",
+    "en": "GDAL 3.13 command line: gdalinfo / gdal_translate / gdalwarp / gdaltransform / gdalsrsinfo for rasters, ogrinfo / ogr2ogr for vectors, with drivers for GeoTIFF, GeoJSON, Shapefile, PostGIS and more. Coordinate transforms use PROJ; mainland China's GCJ-02 offset is not handled."
+  },
+  "roots": ["gdal"],
+  "bin": ["gdalinfo", "gdal_translate", "gdalwarp", "gdaltransform", "gdalsrsinfo", "ogrinfo", "ogr2ogr"],
+  "selftest": "gis-selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "science",
+  "license": "MIT",
+  "homepage": "https://gdal.org",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/gis-selftest": { "src": "bin/gis-selftest", "mode": "755" }
+  },
+  "notes": "gdal 3.13.3-2（Termux main）。闭包里有 xerces-c / postgresql（libpq），两者都要底座 devkit-2026.11.21 起的 libicu 79.1；旧底座（78.3）会报 libicuuc.so.79 not found。和 gis-lite 共用 proj / libgeos / libspatialite 同一批包（同版本，可共存）。闭包 24.0 MB 下载 / 121.2 MB 解包（devkit-2026.11.21.2，底座之外的 13 个包；libicu 由底座提供）；组件包 38.3 MB（gz）。selftest 在 $TMPDIR 写一个 3×2 的 ASCII 栅格，gdal_translate 转 GTiff 再 gdalinfo，gdaltransform 做 EPSG:4326→3857，ogrinfo 读一个 GeoJSON；不联网、不写用户文件。"
+}

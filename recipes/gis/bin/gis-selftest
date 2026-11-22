@@ -1,0 +1,64 @@
+#!{{PREFIX}}/bin/sh
+# gis（GDAL）自检：栅格读转、坐标转换、矢量读取各走一遍。
+# 不联网、不写用户文件；临时文件在 $TMPDIR，结束即删。
+set -u
+PREFIX="{{PREFIX}}"
+tmp="${TMPDIR:-$PREFIX/tmp}/gis-selftest.$$"
+mkdir -p "$tmp" || { echo "✗ 建不了临时目录 $tmp"; exit 1; }
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+fail=0
+bad() { printf '✗ %s\n' "$*"; fail=1; }
+
+# 1) 版本
+ver=$("$PREFIX/bin/gdalinfo" --version 2>&1)
+case "$ver" in
+  GDAL\ 3.*) echo "GDAL: OK  ($ver)" ;;
+  *) bad "gdalinfo --version 失败：$(printf '%s' "$ver" | head -2)" ;;
+esac
+
+# 2) 栅格：写一个 3×2 的 ASCII 栅格，转成 GeoTIFF 再读回来
+cat > "$tmp/in.asc" <<'EOF'
+ncols 3
+nrows 2
+xllcorner 116.0
+yllcorner 39.0
+cellsize 0.01
+NODATA_value -9999
+1 2 3
+4 5 6
+EOF
+if "$PREFIX/bin/gdal_translate" -q -a_srs EPSG:4326 -of GTiff "$tmp/in.asc" "$tmp/out.tif" 2>"$tmp/gt.err" \
+   && "$PREFIX/bin/gdalinfo" "$tmp/out.tif" 2>"$tmp/gi.err" | grep -q "Size is 3, 2"; then
+  echo "GDAL raster: OK  (ASCII grid -> GeoTIFF, size 3x2)"
+else
+  bad "栅格读写失败：$(cat "$tmp/gt.err" "$tmp/gi.err" 2>/dev/null | head -3)"
+fi
+
+# 3) 坐标转换：WGS84 经纬度 → Web Mercator
+tr=$("$PREFIX/bin/gdaltransform" -s_srs EPSG:4326 -t_srs EPSG:3857 2>"$tmp/tr.err" <<'EOF'
+116.4 39.9
+EOF
+)
+tx=$(printf '%s\n' "$tr" | awk 'NR==1{print $1}')
+ty=$(printf '%s\n' "$tr" | awk 'NR==1{print $2}')
+if awk -v x="$tx" -v y="$ty" 'BEGIN{exit !(x>12900000 && x<13000000 && y>4800000 && y<4900000)}'; then
+  echo "GDAL transform: OK  (EPSG:4326 -> 3857: $tx $ty)"
+else
+  bad "gdaltransform 结果不对：'$tr'：$(cat "$tmp/tr.err" 2>/dev/null | head -2)"
+fi
+
+# 4) 矢量：读一个 GeoJSON
+cat > "$tmp/pt.geojson" <<'EOF'
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"beijing"},"geometry":{"type":"Point","coordinates":[116.4,39.9]}}]}
+EOF
+if "$PREFIX/bin/ogrinfo" -so -al "$tmp/pt.geojson" 2>"$tmp/og.err" | grep -q "Feature Count: 1"; then
+  echo "GDAL vector: OK  (GeoJSON, Feature Count: 1)"
+else
+  bad "ogrinfo 读取 GeoJSON 失败：$(cat "$tmp/og.err" 2>/dev/null | head -3)"
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "===== 总结 ===== gis FAIL"
+  exit 1
+fi
+echo "===== 总结 ===== $(printf '%s' "$ver" | awk '{print $1" "$2}' | tr -d ,) raster=PASS transform=PASS vector=PASS"

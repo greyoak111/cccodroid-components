@@ -1,0 +1,7 @@
+#!{{PREFIX}}/bin/sh
+# 用底座自带的 sqlite3 打开数据库，并预先加载本组件的 mod_spatialite。
+# 其余参数原样交给 sqlite3（数据库路径、SQL、-readonly、-cmd 等）：
+#   spatialite my.db "SELECT spatialite_version();"
+#   spatialite -readonly my.db "SELECT COUNT(*) FROM spatial_ref_sys;"
+#   spatialite :memory: "SELECT ST_Area(ST_Buffer(ST_Point(0,0), 1));"
+exec "{{PREFIX}}/bin/sqlite3" -cmd ".load {{PREFIX}}/lib/mod_spatialite.so" "$@"

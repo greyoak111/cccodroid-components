@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "gis-lite",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "地理信息基础（PROJ + GEOS + SpatiaLite）",
+    "en": "GIS essentials (PROJ + GEOS + SpatiaLite)"
+  },
+  "desc": {
+    "zh": "坐标转换与投影（proj、cs2cs、cct、gie、projinfo）、几何运算（geosop、libgeos），以及 SQLite 空间扩展 mod_spatialite（spatialite 入口自动加载）。不含 GDAL 的栅格/矢量格式工具；国内地图的 GCJ-02 偏移不处理。",
+    "en": "Coordinate transforms and projections (proj, cs2cs, cct, gie, projinfo), geometry operations (geosop, libgeos), and SQLite's spatial extension mod_spatialite (auto-loaded by the spatialite entry point). No GDAL raster/vector format tools; mainland China's GCJ-02 offset is not handled."
+  },
+  "roots": ["proj", "libgeos", "libspatialite"],
+  "bin": ["proj", "cs2cs", "cct", "gie", "projinfo", "geosop", "spatialite"],
+  "selftest": "gis-lite-selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "science",
+  "license": "MIT AND LGPL-2.1 AND GPL-2.0",
+  "homepage": "https://proj.org",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/spatialite": { "src": "bin/spatialite", "mode": "755" },
+    "usr/bin/gis-lite-selftest": { "src": "bin/gis-lite-selftest", "mode": "755" }
+  },
+  "notes": "proj 9.9.0 + libgeos 3.15.0 + libspatialite 5.1.0-3（Termux main）。不依赖 libicu，旧底座也能跑；本地只在 devkit-2026.11.21.2 上验证过。闭包 6.6 MB 下载 / 39.5 MB 解包（devkit-2026.11.21.2，底座之外的 6 个包：proj、libgeos、libspatialite、libfreexl、librttopo、libminizip）；组件包 11.5 MB（gz）。spatialite 是把底座自带的 sqlite3 用 -cmd .load 打开 mod_spatialite；selftest 做一次 WGS84→UTM 50N 转换、一次 geosop 面积计算、一次 mod_spatialite 的 ST_Buffer/ST_Area，不联网、不写用户文件。"
+}

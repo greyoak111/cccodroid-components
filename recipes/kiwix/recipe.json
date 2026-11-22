@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "kiwix",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "Kiwix（离线 ZIM 知识库）",
+    "en": "Kiwix (offline ZIM knowledge bases)"
+  },
+  "desc": {
+    "zh": "离线 ZIM 知识库工具：kiwix-serve 在设备上提供阅读服务，kiwix-manage 管理库文件，kiwix-search 做全文检索；另带一个默认只监听 127.0.0.1 的 kiwix-serve-local。ZIM 文件由用户自己下载。",
+    "en": "Tools for offline ZIM knowledge bases: kiwix-serve serves them on the device, kiwix-manage manages the library and kiwix-search does full-text search, plus kiwix-serve-local which listens on 127.0.0.1 by default. ZIM files are downloaded by the user."
+  },
+  "roots": ["kiwix-tools"],
+  "bin": ["kiwix-serve", "kiwix-serve-local", "kiwix-manage", "kiwix-search"],
+  "selftest": "kiwix-selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "category": "other",
+  "license": "GPL-3.0",
+  "homepage": "https://github.com/kiwix/kiwix-tools",
+  "maintainers": ["greyoak111"],
+  "files": {
+    "usr/bin/kiwix-serve-local": { "src": "bin/kiwix-serve-local", "mode": "755" },
+    "usr/bin/kiwix-selftest": { "src": "bin/kiwix-selftest", "mode": "755" }
+  },
+  "notes": "kiwix-tools 3.8.2（Termux main），依赖 libkiwix 14.2.1 / libzim 9.8.2，两者都需要底座 devkit-2026.11.21 起的 libicu 79.1（旧底座的 78.3 会报 libicuuc.so.79 not found）。闭包 4.0 MB 下载 / 18.2 MB 解包（devkit-2026.11.21.2，底座之外的 14 个包；libicu 由底座提供）；组件包 5.8 MB（gz）。上游 kiwix-serve 默认 --address=all（0.0.0.0），所以加一个 kiwix-serve-local 包装默认改绑 127.0.0.1。selftest 只验证三个命令能加载（libkiwix/libzim/ICU），没有可再分发的小 ZIM，不硬造。"
+}
