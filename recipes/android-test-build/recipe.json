@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "android-test-build",
+  "kind": "termux",
+  "revision": 1,
+  "name": {
+    "zh": "安卓测试构建",
+    "en": "Android test build"
+  },
+  "desc": {
+    "zh": "在授权的 Android 工程中构建独立测试 APK：独立测试签名、检查应用包名、Manifest 组件与签名，不修改正式签名材料。",
+    "en": "Build a separately installable test APK from an authorized Android project with a dedicated test key; inspect its package ID, manifest components and signature without touching release signing material."
+  },
+  "roots": ["gradle"],
+  "bin": ["android-test-build"],
+  "selftest": "android-test-build selftest",
+  "needs": { "shizuku": false, "display": false, "gpu": false },
+  "requires": ["android-build"],
+  "category": "dev",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/greyoak111/cccodroid-components",
+  "maintainers": ["luoyueshang"],
+  "files": {
+    "usr/bin/android-test-build": { "src": "bin/android-test-build", "mode": "755" }
+  },
+  "notes": "复用 android-build 组件与底座的 JDK 21、aapt2、d8、apksigner。测试密钥仅保存在用户私有目录（默认 ~/.cccodroid/test-build），权限 0600；不输出密钥内容，不读取或改写项目 release 密钥。构建前需在项目构建脚本中配置测试 applicationId/manifest package；本工具检查最终 APK 身份与组件类名，不自动重写工程。selftest 在 $TMPDIR 检查生成的 DEX；真机继续生成最小 APK、签名并验签，容器缺少系统框架文件时明确跳过 APK 相关步骤。"
+}

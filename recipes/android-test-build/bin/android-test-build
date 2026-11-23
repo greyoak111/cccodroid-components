@@ -1,0 +1,341 @@
+#!{{PREFIX}}/bin/python3
+"""Build and inspect a separately signed Android test APK."""
+
+import argparse
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import zipfile
+from pathlib import Path
+
+PREFIX = os.environ.get("PREFIX") or sys.prefix
+BIN = Path(PREFIX) / "bin"
+def state_dir():
+    return Path(os.environ.get("ANDROID_TEST_BUILD_STATE") or Path.home() / ".cccodroid" / "test-build")
+
+
+def die(message, code=2):
+    print("android-test-build: " + message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def tool(name):
+    path = BIN / name
+    found = str(path) if path.is_file() and os.access(path, os.X_OK) else shutil.which(name)
+    if not found:
+        die("missing required tool: " + name)
+    return found
+
+
+def run(args, capture=False):
+    return subprocess.run(args, text=True, errors="replace", check=False,
+                          stdout=subprocess.PIPE if capture else None,
+                          stderr=subprocess.STDOUT if capture else None)
+
+
+def app_id(value):
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+", value):
+        die("invalid Android application ID: " + value)
+    return value
+
+
+def cmd_keygen(args):
+    state = state_dir()
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(state, 0o700)
+    key = state / "test.keystore"
+    password_file = state / "store-pass"
+    if key.exists():
+        print("Test key already exists: " + str(key))
+        print("Existing keys are never overwritten; remove it yourself only after backing it up.")
+        return 0
+    if args.rotate:
+        die("key rotation is not automatic; back up and move existing key files yourself first")
+    password = os.urandom(24).hex()
+    password_file = state / "store-pass"
+    password_file.write_text(password + "\n" + password + "\n", encoding="ascii")
+    password_file.chmod(0o600)
+    result = run([tool("keytool"), "-genkeypair", "-noprompt", "-keystore", str(key),
+                  "-storetype", "PKCS12", "-storepass:file", str(password_file), "-keypass:file", str(password_file),
+                  "-alias", "android-test", "-keyalg", "RSA", "-keysize", "2048",
+                  "-validity", "3650", "-dname", "CN=cccodroid local test"], capture=True)
+    if result.returncode:
+        for path in (key, password_file):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        die("keytool failed: " + (result.stdout or "")[-2000:], 1)
+    state.chmod(0o700)
+    key.chmod(0o600)
+    print("Created private test signing key: " + str(key))
+    print("It is not part of the project and cannot update the production app.")
+    return 0
+
+
+def find_apk(project, explicit):
+    if explicit:
+        apk = Path(explicit).expanduser().resolve()
+        if not apk.is_file():
+            die("APK not found: " + str(apk))
+        return apk
+    outputs = sorted((project / "app" / "build" / "outputs" / "apk").glob("**/*.apk"))
+    if len(outputs) != 1:
+        die("expected exactly one APK under app/build/outputs/apk; pass --apk to choose explicitly")
+    return outputs[0]
+
+
+def dex_classes(data):
+    if len(data) < 112 or data[:4] != b"dex\n":
+        return set()
+
+    def u32(offset):
+        return int.from_bytes(data[offset:offset + 4], "little")
+
+    def uleb(offset):
+        value = shift = 0
+        while offset < len(data):
+            byte = data[offset]
+            offset += 1
+            value |= (byte & 0x7f) << shift
+            if byte < 0x80:
+                return value, offset
+            shift += 7
+        raise ValueError("truncated DEX ULEB128")
+
+    string_count, string_off = u32(56), u32(60)
+    type_count, type_off = u32(64), u32(68)
+    class_count, class_off = u32(96), u32(100)
+    if max(string_off + string_count * 4, type_off + type_count * 4,
+           class_off + class_count * 32) > len(data):
+        return set()
+    strings = []
+    for index in range(string_count):
+        offset = u32(string_off + index * 4)
+        _, offset = uleb(offset)
+        end = data.find(b"\0", offset)
+        if end < 0:
+            return set()
+        strings.append(data[offset:end].decode("utf-8", "replace"))
+    types = [u32(type_off + i * 4) for i in range(type_count)]
+    classes = set()
+    for i in range(class_count):
+        type_index = u32(class_off + i * 32)
+        if type_index < len(types) and types[type_index] < len(strings):
+            classes.add(strings[types[type_index]])
+    return classes
+
+
+def inspect_apk(apk, expected):
+    with zipfile.ZipFile(apk) as zf:
+        names = zf.namelist()
+        if "AndroidManifest.xml" not in names:
+            die("APK has no AndroidManifest.xml")
+        dex_files = [n for n in names if re.fullmatch(r"classes(?:\d+)?\.dex", n)]
+        classes = set().union(*(dex_classes(zf.read(name)) for name in dex_files))
+    result = run([tool("aapt2"), "dump", "xmltree", str(apk), "--file", "AndroidManifest.xml"], capture=True)
+    if result.returncode:
+        die("aapt2 could not read APK manifest:\n" + (result.stdout or "")[-2000:])
+    text = result.stdout or ""
+    match = re.search(r'^\s+A: package="([^"]+)"', text, re.M)
+    if not match:
+        die("manifest package ID not found in aapt2 output")
+    package = match.group(1)
+    if expected and package != expected:
+        die("package ID mismatch: expected %s, got %s" % (expected, package))
+    components = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        node = re.match(r"\s+E: (activity|activity-alias|service|receiver|provider)\b", line)
+        if not node:
+            continue
+        depth = len(line) - len(line.lstrip())
+        name = ""
+        for child in lines[i + 1:]:
+            child_depth = len(child) - len(child.lstrip())
+            if child.strip() and child_depth <= depth:
+                break
+            found = re.search(r'android:name\([^)]*\)="([^"]+)"', child)
+            if found:
+                name = found.group(1)
+                break
+        if not name:
+            die("manifest %s has no android:name" % node.group(1))
+        if name.startswith("."):
+            name = package + name
+        elif "." not in name:
+            name = package + "." + name
+        components.append((node.group(1), name))
+    if not components:
+        die("manifest has no application components")
+    missing = [name for tag, name in components
+               if tag != "activity-alias" and not name.startswith("android.")
+               and "L" + name.replace(".", "/") + ";" not in classes]
+    if missing:
+        die("component classes missing from APK DEX class definitions: " + ", ".join(missing))
+    print("package: " + package)
+    for tag, name in components:
+        print("%s: %s" % (tag, name))
+    return package
+
+
+def cmd_inspect(args):
+    apk = Path(args.apk).expanduser().resolve()
+    if not apk.is_file():
+        die("APK not found: " + str(apk))
+    print("APK SHA-256: " + hashlib.sha256(apk.read_bytes()).hexdigest())
+    if args.expected_id:
+        expected = app_id(args.expected_id)
+    else:
+        expected = None
+    inspect_apk(apk, expected)
+    result = run([tool("apksigner"), "verify", "--verbose", str(apk)], capture=True)
+    if result.returncode:
+        die("apksigner verification failed:\n" + (result.stdout or "")[-3000:])
+    print("signature: verified")
+    return 0
+
+
+def cmd_build(args):
+    project = Path(args.project or ".").expanduser().resolve()
+    if not project.is_dir():
+        die("project directory not found: " + str(project))
+    expected = app_id(args.application_id)
+    task = args.task or "assembleDebug"
+    result = run([tool("android-build"), "build", "--project", str(project), task], capture=False)
+    if result.returncode:
+        return result.returncode
+    apk = find_apk(project, args.apk)
+    actual = inspect_apk(apk, expected)
+    if actual != expected:
+        die("test application ID mismatch")
+    if not args.sign:
+        print("unsigned APK: " + str(apk))
+        return 0
+    key = state_dir() / "test.keystore"
+    password_file = state_dir() / "store-pass"
+    if not key.is_file() or not password_file.is_file():
+        die("test key is missing; run android-test-build keygen first")
+    output = Path(args.output).expanduser().resolve() if args.output else apk.with_name(apk.stem + "-test-signed.apk")
+    if output == apk:
+        die("output must not overwrite the source APK")
+    if output.exists():
+        die("refusing to overwrite existing output APK: " + str(output))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    result = run([tool("apksigner"), "sign", "--ks", str(key), "--ks-type", "PKCS12",
+                  "--ks-pass", "file:" + str(password_file), "--key-pass", "file:" + str(password_file),
+                  "--ks-key-alias", "android-test", "--out", str(output), str(apk)], capture=True)
+    if result.returncode:
+        die("apksigner sign failed:\n" + (result.stdout or "")[-3000:])
+    print("signed APK: " + str(output))
+    return cmd_inspect(argparse.Namespace(apk=str(output), expected_id=expected))
+
+
+def cmd_selftest(_args):
+    tmp = Path(tempfile.mkdtemp(prefix="android-test-build-", dir=os.environ.get("TMPDIR") or None))
+    try:
+        for name in ("keytool", "aapt2", "d8", "apksigner"):
+            tool(name)
+        tool("java")
+        javac = tool("javac")
+        (tmp / "src").mkdir()
+        source = tmp / "src" / "TestActivity.java"
+        source.write_text(
+            "package selftest; public class TestActivity { "
+            "public static void main(String[] args) {} }", encoding="utf-8")
+        result = run([javac, "-source", "8", "-target", "8", "-d", str(tmp), str(source)], capture=True)
+        if result.returncode:
+            die("javac selftest failed:\\n" + (result.stdout or "")[-2000:], 1)
+        dex_dir = tmp / "dex"
+        dex_dir.mkdir()
+        result = run([tool("d8"), "--min-api", "21", "--output", str(dex_dir),
+                      str(tmp / "selftest" / "TestActivity.class")], capture=True)
+        if result.returncode:
+            die("d8 selftest failed:\\n" + (result.stdout or "")[-2000:], 1)
+        dex = dex_dir / "classes.dex"
+        if "Lselftest/TestActivity;" not in dex_classes(dex.read_bytes()):
+            die("selftest class not found in generated DEX", 1)
+
+        framework = Path("/system/framework/framework-res.apk")
+        try:
+            framework.stat()
+        except FileNotFoundError:
+            print("Android framework-res.apk not found; skipping APK linking, signing, verification and inspection. Run on an Android device for the full selftest.")
+            print("===== 总结 ===== aapt2=SKIP dex=OK test-sign=SKIP signature-verify=SKIP inspect=SKIP")
+            return 0
+
+        manifest = tmp / "AndroidManifest.xml"
+        manifest.write_text(
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+            'package="org.cccodroid.selftest"><application android:label="selftest">'
+            '<activity android:name="selftest.TestActivity"/></application></manifest>',
+            encoding="utf-8")
+        apk = tmp / "selftest.apk"
+        result = run([tool("aapt2"), "link", "-I", str(framework),
+                      "--manifest", str(manifest), "--min-sdk-version", "21", "-o", str(apk)], capture=True)
+        if result.returncode:
+            die("aapt2 selftest failed:\\n" + (result.stdout or "")[-2000:], 1)
+        with zipfile.ZipFile(apk, "a") as zf:
+            zf.write(dex, "classes.dex")
+        test_state = tmp / "state"
+        test_state.mkdir(mode=0o700)
+        previous_state = os.environ.get("ANDROID_TEST_BUILD_STATE")
+        os.environ["ANDROID_TEST_BUILD_STATE"] = str(test_state)
+        try:
+            if cmd_keygen(argparse.Namespace(rotate=False)) != 0:
+                die("temporary test key generation failed", 1)
+            os.chmod(test_state / "store-pass", 0o600)
+            signed = tmp / "signed.apk"
+            result = run([tool("apksigner"), "sign", "--ks", str(test_state / "test.keystore"),
+                          "--ks-type", "PKCS12", "--ks-pass", "file:" + str(test_state / "store-pass"),
+                          "--key-pass", "file:" + str(test_state / "store-pass"), "--ks-key-alias", "android-test",
+                          "--out", str(signed), str(apk)], capture=True)
+            if result.returncode:
+                die("apksigner selftest failed:\\n" + (result.stdout or "")[-2000:], 1)
+            inspect_apk(signed, "org.cccodroid.selftest")
+            verified = run([tool("apksigner"), "verify", str(signed)], capture=True)
+            if verified.returncode:
+                die("apksigner verification selftest failed:\\n" + (verified.stdout or "")[-2000:], 1)
+        finally:
+            if previous_state is None:
+                os.environ.pop("ANDROID_TEST_BUILD_STATE", None)
+            else:
+                os.environ["ANDROID_TEST_BUILD_STATE"] = previous_state
+        print("===== 总结 ===== aapt2=OK dex=OK test-sign=OK signature-verify=OK inspect=OK")
+        return 0
+    except (OSError, zipfile.BadZipFile, ValueError) as exc:
+        die("selftest failed: " + str(exc), 1)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="android-test-build")
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("keygen", help="create a private test signing key")
+    p.add_argument("--rotate", action="store_true", help="refuse and explain that rotation is manual")
+    p.set_defaults(func=cmd_keygen)
+    p = sub.add_parser("inspect", help="check APK package ID, component names and signature")
+    p.add_argument("apk")
+    p.add_argument("--expected-id")
+    p.set_defaults(func=cmd_inspect)
+    p = sub.add_parser("build", help="build, test-sign and inspect a Gradle Android project")
+    p.add_argument("--project", default=".")
+    p.add_argument("--application-id", required=True, help="expected test application ID")
+    p.add_argument("--task", default="assembleDebug")
+    p.add_argument("--apk", help="choose the APK when the project produces more than one")
+    p.add_argument("--output")
+    p.add_argument("--sign", action="store_true", help="sign with the private test key")
+    p.set_defaults(func=cmd_build)
+    p = sub.add_parser("selftest", help="build, test-sign and inspect a temporary APK")
+    p.set_defaults(func=cmd_selftest)
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
