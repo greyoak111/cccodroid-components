@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { ROOT, REPO, APP_REPO, recipes, bases, run } from "./lib.mjs";
+import { ROOT, REPO, APP_REPO, recipes, bases, run, baseAtLeast } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : undefined; };
@@ -183,6 +183,8 @@ const report = [`## 组件审计报告`, ``, `底座 \`${base.tag}\`（${base12}
 for (const id of ids) {
   const r = byId.get(id);
   if (!r) { report.push(`### ❌ ${id}`, "", "仓库里没有这个配方", ""); fails++; continue; }
+  if (r.skipBuild) { report.push(`### ⏭ ${id}`, "", `跳过审计（${r.skipBuild}）`, ""); continue; }
+  if (r.minBase && !baseAtLeast(base.tag, r.minBase)) { report.push(`### ⏭ ${id}`, "", `跳过底座 \`${base.tag}\`（需 ≥ \`${r.minBase}\`）`, ""); continue; }
   console.log(`\n══ ${id}`);
   const b = build(id);
   if (b.error) { report.push(`### ❌ ${id}`, "", "打包失败：", "```", b.error, "```", ""); fails++; continue; }
