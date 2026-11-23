@@ -52,7 +52,7 @@ cccodroid 从 0.1.10 起读这个仓库。浏览器（Chromium）这类预置组
 | `rclone` | rclone：本地目录、WebDAV、S3、Google Drive 等云存储的同步与备份 | 网络 | | MIT |
 | `snowluma` | QQ 机器人（原生 SnowLuma）：OneBot v11 + 白名单桥，与 `qq-bot` 同款机制 | 网络 | 首次 setup 从档案镜像下载 SnowLuma | Apache-2.0（脚本）；SnowLuma 源码可用非商业许可（运行时） |
 
-所有已上架的组件都在当前工具包（devkit-2026.10.28）上真机验证过：有的直接验，有的从旧工具包上的验证记录自动继承（见下面「真机验证」）。具体记录在 [`verified.json`](verified.json)。
+所有已上架的组件都在当前工具包（devkit-2026.11.21.2）上验证过：有的真机直接验，有的从旧工具包上的真机记录自动继承，有的由 arm64 容器自动跑过 selftest（见下面「真机验证」）。具体记录在 [`verified.json`](verified.json)。
 
 「仅骁龙」的组件，App 在别家芯片的设备上不给装。有依赖的组件，App 会先让你装好依赖，依赖也不能在它之前卸载。
 
@@ -77,6 +77,9 @@ cccodroid 从 0.1.10 起读这个仓库。浏览器（Chromium）这类预置组
 - `ml-tflite`（AI）：TensorFlow Lite 2.21 CPU 推理，自带 numpy；模型自备。
 - `minecraft-server`（其他）：原生跑 Paper 1.21.11 服务端，Java 21 由底座提供。第一次启动会从 Mojang 官方下载原版服务端（约 54 MB）并打补丁，实测近 9 分钟；要你自己读并同意 [Minecraft EULA](https://aka.ms/MinecraftEULA)。默认只听本机，局域网联机要显式打开。
 - `qq-bot`（网络）：在手机上原生跑 Linux 版 QQ + NapCat 的 OneBot 机器人，只回复白名单里的会话，明确以 AI 身份回复。第一次 `setup` 经你同意后从腾讯官方和 NapCat 的 GitHub Release 下载，共约 307 MB、装后约 1.1 GB。**免责声明：本组件是社区作品，与腾讯、QQ、NapCat 均无关联，未获官方授权或认可；它通过非官方框架接管 QQ 客户端，可能违反腾讯的服务协议，登录的 QQ 号可能被限制、冻结或封禁，风险与损失由使用者自行承担，建议用小号。机器人的回复由 AI 生成，使用者对它发出的全部内容负责，须遵守法律法规、平台规则和群规；不得用于批量注册、养号、刷屏、营销群发或冒充真人。NapCat 限非商业使用。组件按「现状」提供，不作任何担保。**
+- `gis-lite`（科学计算）：PROJ 坐标转换/投影 + GEOS 几何运算（geosop）+ SQLite 空间扩展 SpatiaLite，`spatialite` 入口自动加载 mod_spatialite。约 39.5 MB；不处理国内地图的 GCJ-02 偏移（MIT / LGPL-2.1 / GPL-2.0）。
+- `gis`（科学计算）：GDAL 3.13 命令行，栅格/矢量格式转换与坐标转换（gdalinfo、gdal_translate、gdalwarp、ogr2ogr 等）。约 91 MB；需要工具包 devkit-2026.11.21 或更新（libicu 79.1），和 `gis-lite` 共用 PROJ / GEOS / SpatiaLite 的包（MIT / LGPL-2.1 / GPL-2.0 / Apache-2.0 / BSD-3-Clause / Zlib / PostgreSQL）。
+- `kiwix`（其他）：离线 ZIM 知识库（kiwix-serve / kiwix-manage / kiwix-search），`kiwix-serve-local` 默认只监听 127.0.0.1。约 18.2 MB；ZIM 文件由你自己下载，需要 devkit-2026.11.21 或更新（GPL-3.0）。
 
 ## 怎么运作
 

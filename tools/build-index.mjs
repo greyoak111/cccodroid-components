@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { ROOT, REPO, APP_REPO, recipes, run, asset, modelsOf } from "./lib.mjs";
+import { ROOT, REPO, APP_REPO, recipes, run, asset, modelsOf, baseAtLeast } from "./lib.mjs";
 
 // 兜底 ABI 策略（若通过 --devkit 指向了 cccodroid/devkit，会直接读取那里的 abi-policy.json）
 const FALLBACK_ABI_POLICY = {
@@ -209,6 +209,10 @@ function main() {
       const m = JSON.parse(fs.readFileSync(path.join(dl, f), "utf8"));
       const name = asset(m.id, m.version, m.base.gz);
       if (m.id !== r.id || !names.has(name + ".tar.gz")) continue;       // 包没传完的不收
+      if (r.minBase && m.base?.tag && !baseAtLeast(m.base.tag, r.minBase)) {
+        console.log(`· ${r.id}: 索引跳过旧底座清单 ${m.base.tag}（需 ≥ ${r.minBase}）`);
+        continue;
+      }
       all.push(m);
       const cur = byBase.get(m.base.gz);
       if (!cur || vcmp(m.version, cur.version) > 0) byBase.set(m.base.gz, { ...m, asset: name + ".tar.gz" });

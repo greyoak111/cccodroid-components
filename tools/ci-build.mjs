@@ -7,7 +7,7 @@
 // 「已发布」以资产在不在为准，所以重跑 CI 是安全的；要重打就把 revision 加一。
 import fs from "node:fs";
 import path from "node:path";
-import { ROOT, REPO, APP_REPO, recipes, bases, run, asset } from "./lib.mjs";
+import { ROOT, REPO, APP_REPO, recipes, bases, run, asset, baseAtLeast } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : undefined; };
@@ -17,7 +17,14 @@ const WORK = path.resolve(process.env.WORK || path.join(ROOT, "work"));
 if (!fs.existsSync(path.join(DEVKIT, "devkit.mjs"))) { console.error("找不到 devkit.mjs: " + DEVKIT); process.exit(1); }
 
 const gh = (...a) => run("gh", a);
-const assetsOf = (tag) => { try { return JSON.parse(run("gh", ["release", "view", tag, "-R", REPO, "--json", "assets"], { stdio: ["ignore", "pipe", "ignore"] })).assets.map((a) => a.name); } catch { return null; } };
+const assetsCache = new Map();
+const assetsOf = (tag) => {
+  if (assetsCache.has(tag)) return assetsCache.get(tag);
+  let res = null;
+  try { res = JSON.parse(run("gh", ["release", "view", tag, "-R", REPO, "--json", "assets"], { stdio: ["ignore", "pipe", "ignore"] })).assets.map((a) => a.name); } catch {}
+  assetsCache.set(tag, res);
+  return res;
+};
 
 let built = 0, failed = 0;
 for (const b of bases()) {
@@ -30,6 +37,7 @@ for (const b of bases()) {
   for (const r of recipes()) {
     if (opt("only") && r.id !== opt("only")) continue;
     if (r.skipBuild) { console.log(`· ${r.id}: 跳过构建（${r.skipBuild}）`); continue; }
+    if (r.minBase && !baseAtLeast(b.tag, r.minBase)) { console.log(`· ${r.id}: 跳过旧底座 ${b.tag}（需 ≥ ${r.minBase}）`); continue; }
     const dk = (extra) => run("node", [path.join(DEVKIT, "devkit.mjs"), "component", "--recipe", r.dir, "--target", lock.target, "--base", lockFile, ...extra], { stdio: ["ignore", "pipe", "inherit"] });
     let version;
     try { version = /COMPONENT_VERSION=(\S+)/.exec(dk(["--dry"]))[1]; }
@@ -57,6 +65,7 @@ for (const b of bases()) {
     // 先传包再传清单：build-index 只认有清单的构建，半截上传不会进索引
     gh("release", "upload", r.id, "-R", REPO, gz, "--clobber");
     gh("release", "upload", r.id, "-R", REPO, js, "--clobber");
+    assetsCache.set(r.id, [...(have || []), path.basename(gz), path.basename(js)]);
     fs.rmSync(gz);
     console.log(`  ↑ 已上传`);
   }

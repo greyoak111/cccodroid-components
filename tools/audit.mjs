@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { ROOT, REPO, APP_REPO, recipes, bases, run } from "./lib.mjs";
+import { ROOT, REPO, APP_REPO, recipes, bases, run, baseAtLeast } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : undefined; };
@@ -115,6 +115,8 @@ const ANDROID_LIBS = new Set(["libc.so", "libm.so", "libdl.so", "liblog.so", "li
   "libGLESv2.so", "libGLESv3.so", "libvulkan.so", "libOpenSLES.so", "libjnigraphics.so", "libmediandk.so", "libcamera2ndk.so",
   "libnativewindow.so", "libsync.so", "libneuralnetworks.so", "libOpenMAXAL.so", "libstdc++.so", "libaaudio.so", "libamidi.so",
   "libbinder_ndk.so", "libicu.so", "libvndksupport.so"]);
+// 安卓系统库仅限系统/APEX 标准库目录，避免任意绝对路径同名误放行
+const ANDROID_SYS_DIR = /^\/(?:system|apex\/com\.android\.(?:runtime|art))\/lib(?:64)?\//;
 // 厂商库：只在部分设备的 /vendor 里有（骁龙的 OpenCL 等），链了它的东西只能在那些设备上用 —— 提醒，不拦
 const VENDOR_LIBS = new Set(["libOpenCL.so", "libcdsprpc.so", "libQnnHtp.so", "libQnnSystem.so"]);
 const SHELL_BUILTINS = new Set(["cd", "echo", "test", "[", "true", "false", "printf", "export", "env", "sh", "bash", "command", "exec", "set"]);
@@ -181,6 +183,8 @@ const report = [`## 组件审计报告`, ``, `底座 \`${base.tag}\`（${base12}
 for (const id of ids) {
   const r = byId.get(id);
   if (!r) { report.push(`### ❌ ${id}`, "", "仓库里没有这个配方", ""); fails++; continue; }
+  if (r.skipBuild) { report.push(`### ⏭ ${id}`, "", `跳过审计（${r.skipBuild}）`, ""); continue; }
+  if (r.minBase && !baseAtLeast(base.tag, r.minBase)) { report.push(`### ⏭ ${id}`, "", `跳过底座 \`${base.tag}\`（需 ≥ \`${r.minBase}\`）`, ""); continue; }
   console.log(`\n══ ${id}`);
   const b = build(id);
   if (b.error) { report.push(`### ❌ ${id}`, "", "打包失败：", "```", b.error, "```", ""); fails++; continue; }
@@ -231,12 +235,22 @@ for (const id of ids) {
         glibc ? "usr/glibc/lib" : "usr/lib", dirOf(e.name)].map((p) => path.posix.normalize(p.replace(/^\//, "")));
       const node = { exe: !!info.interp, deps: [] };
       elfGraph.set(e.name, node);
-      for (const n of info.needed) {
-        if (!glibc && ANDROID_LIBS.has(n)) continue;
-        const hit = dirs.find((d) => has(d + "/" + n));
-        if (hit) { if (b.names.has(hit + "/" + n)) node.deps.push(hit + "/" + n); continue; }
-        if (!glibc && VENDOR_LIBS.has(n)) { vendor.set(n, [...(vendor.get(n) || []), e.name]); continue; }
-        (anywhere.has(n) ? offPath : missing).set(n, [...((anywhere.has(n) ? offPath : missing).get(n) || []), e.name]);
+      for (const n0 of info.needed) {
+        // Termux 的 proj 等包会把 DT_NEEDED 写成绝对路径（/data/data/com.termux/files/usr/lib/libsqlite3.so，
+        // 改写前缀后是 /data/data/cc.codroid/files/usr/lib/libsqlite3.so）：先换算成 usr/… 再查，
+        // 别把它当成"哪里都找不到"。绝对路径不在应用前缀里的照旧按原样报。
+        const abs = n0.startsWith("/");
+        const n = path.posix.normalize(abs ? rel(n0) : n0);
+        const bn = path.posix.basename(n);
+        if (!glibc && ((!abs && ANDROID_LIBS.has(n)) || (abs && ANDROID_SYS_DIR.test(n0) && ANDROID_LIBS.has(bn)))) continue;
+        if (abs) {
+          if (has(n)) { if (b.names.has(n)) node.deps.push(n); continue; }
+        } else {
+          const hit = dirs.find((d) => has(d + "/" + n));
+          if (hit) { if (b.names.has(hit + "/" + n)) node.deps.push(hit + "/" + n); continue; }
+        }
+        if (!glibc && (VENDOR_LIBS.has(n) || (abs && VENDOR_LIBS.has(bn)))) { vendor.set(n, [...(vendor.get(n) || []), e.name]); continue; }
+        (anywhere.has(bn) ? offPath : missing).set(n, [...((anywhere.has(bn) ? offPath : missing).get(n) || []), e.name]);
       }
     } else if (head[0] === 0x23 && head[1] === 0x21 && e.mode & 0o111) {
       const interp = head.toString("latin1", 2, 200).split("\n")[0].trim().split(/\s+/)[0];
