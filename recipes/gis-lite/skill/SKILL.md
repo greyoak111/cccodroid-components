@@ -28,7 +28,7 @@ proj / cs2cs / cct / gie / projinfo
   └─ $PREFIX/bin/<命令>          本组件（Termux main 的 proj 9.9.0，前缀已等长改写成应用路径）
        ├─ libproj.so           本组件 $PREFIX/lib
        ├─ proj.db 等数据        本组件 $PREFIX/share/proj（编译进去的路径就是这里）
-       └─ libsqlite3 / libtiff / libcurl   底座（devkit 基础模块）
+       └─ libsqlite3 / libtiff / libcurl   底座（base / cli / media 等模块）
 
 geosop
   ├─ $PREFIX/bin/geosop         本组件（libgeos 3.15.0）

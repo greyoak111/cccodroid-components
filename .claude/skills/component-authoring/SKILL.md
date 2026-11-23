@@ -25,7 +25,7 @@ description: 给 cccodroid 组件市场写新组件或改已有组件（recipes/
 
 ## CI 会拦的（`tools/check-recipes.mjs`）
 
-格式类：`schema`、`id` 与目录名一致、`revision`、`name`/`desc` 中英都有、`roots`/`bin`/`selftest`/`license` 必填、不认识的字段、`files`/`fetch` 只能落在 `usr/` 下。
+格式类：`schema`、`id` 与目录名一致、`revision`、`name`/`desc` 中英都有、`roots`/`bin`/`selftest`/`license` 必填、`minBase`（若依赖新底座才有的共享库 SONAME 如 `libicu 79` 时声明，格式 `devkit-YYYY.MM.DD`）、不认识的字段、`files`/`fetch` 只能落在 `usr/` 下。
 
 安全类：
 
@@ -73,7 +73,7 @@ skill 里要写明「多大、从哪下」，并且**让 Claude 先告诉用户�
 
 ### 别重复带包
 
-- 底座里已有的包 CI 会自动跳过，不用管。
+- 底座里已有的包 CI 会自动跳过，不用管。如果 Termux 上游包硬链了**仅新底座才有的共享库 SONAME**（如 `libicu 79` 而老底座是 `78`），务必在 `recipe.json` 写 `"minBase": "devkit-2026.11.21"`，CI 会自动跳过更老的底座、避免把缺库坏包发进索引。
 - **两个组件带同一批包**会出问题：版本不同时（例：浏览器带 Mesa 26.2.4、`gpu-driver` 带 26.2.5）只有先装的那版生效。
   App 已经能保证卸掉一个不弄坏另一个，但能避免就避免。
 - 非带不可的（例如都需要 Mesa），PR 里写清楚和哪个组件共用了哪些包。

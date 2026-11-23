@@ -16,8 +16,9 @@
   "bin": ["gdalinfo", "gdal_translate", "gdalwarp", "gdaltransform", "gdalsrsinfo", "ogrinfo", "ogr2ogr"],
   "selftest": "gis-selftest",
   "needs": { "shizuku": false, "display": false, "gpu": false },
+  "minBase": "devkit-2026.11.21",
   "category": "science",
-  "license": "MIT",
+  "license": "MIT AND LGPL-2.1 AND GPL-2.0 AND Apache-2.0 AND BSD-3-Clause AND Zlib AND PostgreSQL",
   "homepage": "https://gdal.org",
   "maintainers": ["greyoak111"],
   "files": {

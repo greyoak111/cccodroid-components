@@ -15,6 +15,7 @@
   "bin": ["kiwix-serve", "kiwix-serve-local", "kiwix-manage", "kiwix-search"],
   "selftest": "kiwix-selftest",
   "needs": { "shizuku": false, "display": false, "gpu": false },
+  "minBase": "devkit-2026.11.21",
   "category": "other",
   "license": "GPL-3.0",
   "homepage": "https://github.com/kiwix/kiwix-tools",

@@ -1,10 +1,10 @@
 // 检查配方格式（PR 时 CI 跑；本地也可以跑）：node tools/check-recipes.mjs
 import fs from "node:fs";
 import path from "node:path";
-import { recipes, modelsOf } from "./lib.mjs";
+import { recipes, modelsOf, bases, baseAtLeast } from "./lib.mjs";
 
 const KNOWN = new Set(["schema", "id", "kind", "revision", "version", "name", "desc", "repos", "roots", "exclude", "files",
-  "fetch", "npm", "pip", "requires", "bin", "selftest", "needs", "license", "homepage", "maintainers", "notes", "category", "mcp", "skipBuild"]);
+  "fetch", "npm", "pip", "requires", "bin", "selftest", "needs", "license", "homepage", "maintainers", "notes", "category", "mcp", "skipBuild", "minBase"]);
 // 分类（App 扩展页的分类索引条按它分）：只认这几个，界面上有对应的译名
 const CATEGORIES = new Set(["dev", "office", "media", "science", "eda", "cad", "ai", "gpu", "net", "mcp", "other"]);
 const KINDS = new Set(["termux", "glibc"]);
@@ -31,6 +31,7 @@ const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e
 let bad = 0;
 const err = (r, m) => { console.log(`✗ ${r}: ${m}`); bad++; };
 const ids = new Set(), wanted = [], adreno = new Map();   // wanted：[被依赖, 依赖者]；adreno：id → 是否写了 needs.gpu: "adreno"
+const allBases = bases();
 for (const r of recipes()) {
   const n = path.basename(r.dir);
   if (r.schema !== 1) err(n, "schema 必须是 1");
@@ -50,6 +51,13 @@ for (const r of recipes()) {
   if (!CATEGORIES.has(r.category)) err(n, `category 必填，只能是 ${[...CATEGORIES].join(" / ")}`);
   for (const k of Object.keys(r)) if (k !== "dir" && !KNOWN.has(k)) err(n, "不认识的字段: " + k);
   if (r.skipBuild !== undefined && (typeof r.skipBuild !== "string" || !r.skipBuild.trim())) err(n, "skipBuild 要写一句跳过原因（非空字符串）");
+  if (r.minBase !== undefined) {
+    if (typeof r.minBase !== "string" || !/^devkit-\d{4}\.\d{2}\.\d{2}(?:\.\d+)?$/.test(r.minBase)) {
+      err(n, `minBase 格式不对（应为 devkit-YYYY.MM.DD 或 devkit-YYYY.MM.DD.N）: ${r.minBase}`);
+    } else if (!allBases.some((b) => baseAtLeast(b.tag, r.minBase))) {
+      err(n, `bases.json 里没有任何底座满足 minBase >= ${r.minBase}（防拼写错误导致全底座跳过）`);
+    }
+  }
   // mcp：装好后 App 自动用 claude mcp add 注册的 stdio 服务（卸载时注销）。bin 必须是本组件 bin 里的一个入口
   if (r.mcp !== undefined) {
     const m = r.mcp;

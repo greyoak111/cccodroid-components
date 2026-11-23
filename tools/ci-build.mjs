@@ -7,7 +7,7 @@
 // 「已发布」以资产在不在为准，所以重跑 CI 是安全的；要重打就把 revision 加一。
 import fs from "node:fs";
 import path from "node:path";
-import { ROOT, REPO, APP_REPO, recipes, bases, run, asset } from "./lib.mjs";
+import { ROOT, REPO, APP_REPO, recipes, bases, run, asset, baseAtLeast } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : undefined; };
@@ -30,6 +30,7 @@ for (const b of bases()) {
   for (const r of recipes()) {
     if (opt("only") && r.id !== opt("only")) continue;
     if (r.skipBuild) { console.log(`· ${r.id}: 跳过构建（${r.skipBuild}）`); continue; }
+    if (r.minBase && !baseAtLeast(b.tag, r.minBase)) { console.log(`· ${r.id}: 跳过旧底座 ${b.tag}（需 ≥ ${r.minBase}）`); continue; }
     const dk = (extra) => run("node", [path.join(DEVKIT, "devkit.mjs"), "component", "--recipe", r.dir, "--target", lock.target, "--base", lockFile, ...extra], { stdio: ["ignore", "pipe", "inherit"] });
     let version;
     try { version = /COMPONENT_VERSION=(\S+)/.exec(dk(["--dry"]))[1]; }

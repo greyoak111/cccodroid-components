@@ -28,7 +28,15 @@ case "$v3" in
   *) [ "$rc3" -eq 0 ] && echo "kiwix-search: OK  (help printed)" || bad "kiwix-search --help 返回 $rc3：$(printf '%s' "$v3" | head -2)" ;;
 esac
 
-[ -x "$PREFIX/bin/kiwix-serve-local" ] || bad "kiwix-serve-local 不可执行"
+v4=$("$PREFIX/bin/kiwix-serve-local" --version 2>&1)
+rc4=$?
+"$PREFIX/bin/kiwix-serve-local" --help >/dev/null 2>&1
+rc4h=$?
+if [ "$rc4" -eq 0 ] && [ -n "$v4" ] && [ "$rc4h" -eq 0 ]; then
+  echo "kiwix-serve-local: OK  (--version / --help)"
+else
+  bad "kiwix-serve-local --version/--help 失败（version rc=$rc4, help rc=$rc4h）：$(printf '%s' "$v4" | head -2)"
+fi
 
 if [ "$fail" -ne 0 ]; then
   echo "===== 总结 ===== kiwix FAIL"
