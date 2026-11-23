@@ -23,7 +23,53 @@ const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 // 可信 HOME 与组件根只归并系统前缀/调用者的根别名；子目录链接仍逐项拒绝。
 const pathRoots=[os.homedir(),SOURCE];
 const normalizedPath=file=>registration.normalizedPath(file,pathRoots);
-const samePath=(a,b)=>{try{return normalizedPath(a)===normalizedPath(b);}catch{return false;}};
+// 跨别名同文件/同目录校验：优先核对词法规范且无子路径软链的真实 inode（兼容 /data/data 与 /data/user/0 绑定挂载，
+// 同时严格拒绝中间段符号链接或普通文件硬链接伪装）。
+function sameDevIno(a,b,{disallowHardlink=false}={}){
+  try{
+    if(typeof a!=='string'||typeof b!=='string'||!path.isAbsolute(a)||!path.isAbsolute(b))return false;
+    const sa=fs.lstatSync(a,{bigint:true}),sb=fs.lstatSync(b,{bigint:true});
+    if(sa.isSymbolicLink()||sb.isSymbolicLink())return false;
+    if(disallowHardlink&&(sa.isFile()||sb.isFile())&&(sa.nlink!==1n||sb.nlink!==1n))return false;
+    return sa.dev===sb.dev&&sa.ino===sb.ino;
+  }catch{return false;}
+}
+function isCanonicalPath(dir){
+  try{
+    if(typeof dir!=='string'||!path.isAbsolute(dir)||path.resolve(dir)!==dir)return false;
+    const st=fs.lstatSync(dir);
+    if(st.isSymbolicLink())return false;
+    const real=fs.realpathSync(dir);
+    if(real===dir)return true;
+    // 允许可信根之上的系统级绑定挂载别名（如 /data/data/<pkg> 与 /data/user/0/<pkg>），逐级拒绝子路径中的符号链接
+    for(let q=dir;;q=path.dirname(q)){
+      if(fs.lstatSync(q).isSymbolicLink())return false;
+      if(pathRoots.some(r=>sameDir(q,r))||path.dirname(q)===q)break;
+    }
+    return sameDevIno(real,dir);
+  }catch{return false;}
+}
+function hasNoSymlinkChain(file){
+  try{
+    if(typeof file!=='string'||!path.isAbsolute(file)||path.resolve(file)!==file)return false;
+    let cur=file;
+    while(!exists(cur)){
+      const next=path.dirname(cur);
+      if(next===cur)return false;
+      cur=next;
+    }
+    if(fs.lstatSync(cur).isSymbolicLink())return false;
+    return isCanonicalPath(fs.lstatSync(cur).isDirectory()?cur:path.dirname(cur));
+  }catch{return false;}
+}
+const samePath=(a,b)=>{
+  try{
+    const na=normalizedPath(a),nb=normalizedPath(b);
+    if(na===nb)return true;
+    if(!hasNoSymlinkChain(na)||!hasNoSymlinkChain(nb))return false;
+    return sameDevIno(na,nb,{disallowHardlink:true});
+  }catch{return false;}
+};
 function trustedHome() { const home=normalizedPath(fs.realpathSync(os.homedir()));instanceDirectory(home);return home; }
 
 function atomic(file, content, mode=0o600) {
@@ -451,7 +497,7 @@ function underDir(p,root) { return !sameDir(p,root)&&insideOrSame(p,root); }
 function instanceDirectory(dir) {
   dir=normalizedPath(dir);
   const st=fs.lstatSync(dir);
-  if(!st.isDirectory()||fs.realpathSync(dir)!==dir)throw new Error('实例目录或父路径不规范，拒绝操作。');
+  if(!st.isDirectory()||!isCanonicalPath(dir))throw new Error('实例目录或父路径不规范，拒绝操作。');
   return st;
 }
 function openInstanceDirectory(dir) {
@@ -510,7 +556,7 @@ function checkInstance(target,options,previous=null,registered=true,stale=null) 
   // 与当前组件不一致的文件名记进 stale，不再当冲突。
   const targetStat=instanceDirectory(target),m=JSON.parse(instanceFile(path.join(target,MARKER),65536).data),home=trustedHome();
   const service=m?.service;
-  if(m?.id!=='ccr-bridge-kit'||m.version!==VERSION||!samePath(m.target,target)||!object(service)||service.schema!==1||!samePath(service.home,home)||fs.realpathSync(home)!==home||service.instanceId!==options.instance)throw new Error('本地桥实例注册不匹配。');
+  if(m?.id!=='ccr-bridge-kit'||m.version!==VERSION||!samePath(m.target,target)||!object(service)||service.schema!==1||!samePath(service.home,home)||!isCanonicalPath(home)||service.instanceId!==options.instance)throw new Error('本地桥实例注册不匹配。');
   const port=instancePort(target);
   if(options.endpoint!=='http://127.0.0.1:'+port)throw new Error('本地桥 endpoint 与实例端口不匹配。');
   if(typeof m.settings!=='string'||!path.isAbsolute(m.settings)||path.resolve(m.settings)!==m.settings)throw new Error('实例设置路径不规范。');
@@ -723,8 +769,8 @@ const GUI_MESSAGES={INVALID_INPUT:'请检查 API 地址、API Key 和模型名�
 function guiError(code){const error=new Error(GUI_MESSAGES[code]||GUI_MESSAGES.RUNTIME_CONFLICT);error.guiCode=code;return error;}
 function guiPaths(){
   const home=trustedHome(),target=path.join(home,'.local/share/ccr-bridge-kit'),settings=path.join(home,'.claude/settings.json');
-  if(fs.realpathSync(home)!==home)throw guiError('RUNTIME_CONFLICT');
-  const canonical=file=>{let parent=file;while(!exists(parent))parent=path.dirname(parent);if(fs.realpathSync(parent)!==parent)throw guiError('RUNTIME_CONFLICT');};
+  if(!isCanonicalPath(home))throw guiError('RUNTIME_CONFLICT');
+  const canonical=file=>{let parent=file;while(!exists(parent))parent=path.dirname(parent);if(!isCanonicalPath(parent))throw guiError('RUNTIME_CONFLICT');};
   canonical(target);canonical(settings);canonical(path.dirname(registration.fileOf(home)));
   safeTarget(target,settings);
   return {home,target,settings};
@@ -809,7 +855,7 @@ function checkGuiRuntime(paths,previous=null,allowConfiguring=false,readOnly=fal
   }
   // GUI 仅接管本组件完整且当前兼容的 bundled 运行副本，绝不覆盖手工/旧版本脚本。
   const configPath=path.join(target,'runtime-home/.claude-code-router/config.json'),connectionPath=path.join(target,'connection.json');
-  for(const dir of [path.dirname(configPath),path.join(target,'runtime-home')])if(fs.realpathSync(dir)!==dir)throw guiError('RUNTIME_CONFLICT');
+  for(const dir of [path.dirname(configPath),path.join(target,'runtime-home')])if(!isCanonicalPath(dir))throw guiError('RUNTIME_CONFLICT');
   const readConfig=file=>{
     const actual=instanceFile(file,128*1024);
     if((actual.stat.mode&0o077)!==0)throw guiError('RUNTIME_CONFLICT');
@@ -1087,7 +1133,7 @@ async function gui(command,args){
 }
 function purgeTarget(target) {
   target=normalizedPath(target);
-  if(fs.lstatSync(target).isSymbolicLink() || fs.realpathSync(target)!==target)throw new Error('清理目标或父路径有符号链接，拒绝删除。');
+  if(fs.lstatSync(target).isSymbolicLink() || !isCanonicalPath(target))throw new Error('清理目标或父路径有符号链接，拒绝删除。');
   if(!underDir(target,trustedHome())&&!underDir(target,normalizedPath(fs.realpathSync(os.tmpdir()))))throw new Error('清理目标必须位于私有 HOME 或临时目录的专用子目录。');
   const manifest=loadManifest(target);
   safeTarget(target,path.resolve(manifest.settings));
