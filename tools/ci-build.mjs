@@ -17,7 +17,14 @@ const WORK = path.resolve(process.env.WORK || path.join(ROOT, "work"));
 if (!fs.existsSync(path.join(DEVKIT, "devkit.mjs"))) { console.error("找不到 devkit.mjs: " + DEVKIT); process.exit(1); }
 
 const gh = (...a) => run("gh", a);
-const assetsOf = (tag) => { try { return JSON.parse(run("gh", ["release", "view", tag, "-R", REPO, "--json", "assets"], { stdio: ["ignore", "pipe", "ignore"] })).assets.map((a) => a.name); } catch { return null; } };
+const assetsCache = new Map();
+const assetsOf = (tag) => {
+  if (assetsCache.has(tag)) return assetsCache.get(tag);
+  let res = null;
+  try { res = JSON.parse(run("gh", ["release", "view", tag, "-R", REPO, "--json", "assets"], { stdio: ["ignore", "pipe", "ignore"] })).assets.map((a) => a.name); } catch {}
+  assetsCache.set(tag, res);
+  return res;
+};
 
 let built = 0, failed = 0;
 for (const b of bases()) {
@@ -58,6 +65,7 @@ for (const b of bases()) {
     // 先传包再传清单：build-index 只认有清单的构建，半截上传不会进索引
     gh("release", "upload", r.id, "-R", REPO, gz, "--clobber");
     gh("release", "upload", r.id, "-R", REPO, js, "--clobber");
+    assetsCache.set(r.id, [...(have || []), path.basename(gz), path.basename(js)]);
     fs.rmSync(gz);
     console.log(`  ↑ 已上传`);
   }
