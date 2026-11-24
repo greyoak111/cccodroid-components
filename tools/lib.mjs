@@ -58,3 +58,12 @@ export function modelsOf(r) {
   });
   return { models: errors.length ? [] : models, errors };
 }
+
+export const SKILL_FLAGS = [
+  ["🔴", "碰凭据", /gateway-token|gh auth token|\.ssh\/id_|\bapi[_-]?key\b|\bpassword\b|\bsecret\b/i],
+  ["🔴", "下载内容直接进 shell", /\b(?:curl|wget)\b[^\n|]*\|\s*(?:ba|z)?sh\b/],
+  ["🔴", "提权 / 动系统", /\bpriv\b|shizuku|settings put|\bpm (?:install|uninstall)\b|\bam (?:start|force-stop)\b/i],
+  ["🟡", "第三方站点登录态 / Cookie 抓取调用（请核对是否已提示遵守目标站点协议与账号风控边界）", /(?:\b(?:SESSDATA|bili_jct|document\.cookie)\b|(?:^|[^A-Za-z0-9_-])cookies?\.txt\b|(?:^|[\s"'`=(])--cookies?(?:-from-browser)?(?=[\s"'`=)]|$))/i],
+  ["🟡", "删除 / 对外发布", /\brm -[a-z]*r[a-z]*f|\bpush --force|\bgh (?:release|repo) (?:create|delete)|\bgh pr merge\b/],
+  ["🟡", "联网下载", /\b(?:curl|wget)\b(?![^\n]*\b(?:127\.0\.0\.1|localhost)\b)|\b(?:git clone|pip install|npm install|huggingface-cli|hf download)\b/],
+];

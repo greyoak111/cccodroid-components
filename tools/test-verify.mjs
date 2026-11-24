@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { isHardwareBound, basePkgAbiBreaking, inheritBlockerWithLocks, mergeCiVerified } from "./build-index.mjs";
+import { SKILL_FLAGS } from "./lib.mjs";
 
 test("isHardwareBound：仅 GPU / display / shizuku 强制真机验证", () => {
   assert.equal(isHardwareBound({}), false);
@@ -63,4 +64,18 @@ test("mergeCiVerified：合并多片结果并保留历史底座记录", () => {
   assert.equal(merged.gh["2.104.0-r2"].oldbase12345.gzSha256, "111");
   assert.equal(merged.gh["2.104.0-r2"].newbase67890.gzSha256, "222");
   assert.equal(merged.d2["0.9.0-r1"].newbase67890.gzSha256, "333");
+});
+
+test("SKILL_FLAGS Cookie / 登录态规则：命中 --cookies-from-browser 与常见凭据，排除连字符词误报", () => {
+  const cookieRule = SKILL_FLAGS.find(([, label]) => label.includes("Cookie"));
+  assert.ok(cookieRule, "应存在 Cookie / 登录态标记规则");
+  const re = cookieRule[2];
+  assert.equal(re.test("yt-dlp --cookies-from-browser chrome https://example.com"), true);
+  assert.equal(re.test("yt-dlp --cookies-from-browser=firefox https://example.com"), true);
+  assert.equal(re.test("支持传 `--cookies-from-browser` 或 `--cookies cookies.txt`"), true);
+  assert.equal(re.test("curl -H 'Cookie: SESSDATA=xxx; bili_jct=yyy'"), true);
+  assert.equal(re.test("console.log(document.cookie)"), true);
+  assert.equal(re.test("read /tmp/cookies.txt"), true);
+  assert.equal(re.test("fortune-cookies.txt"), false);
+  assert.equal(re.test("yt-dlp https://example.com/video"), false);
 });
