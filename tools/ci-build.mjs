@@ -7,41 +7,248 @@
 // 「已发布」以资产在不在为准，所以重跑 CI 是安全的；要重打就把 revision 加一。
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
+import crypto from "node:crypto";
+import { pathToFileURL } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ROOT, REPO, APP_REPO, recipes, bases, run, asset, baseAtLeast } from "./lib.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : undefined; };
 const DEVKIT = path.resolve(opt("devkit") || "../cccodroid/devkit");
+const ONLY = opt("only");
 const DRY = args.includes("--dry"), UPLOAD = !args.includes("--no-upload") && !DRY;
 const WORK = path.resolve(process.env.WORK || path.join(ROOT, "work"));
 if (!fs.existsSync(path.join(DEVKIT, "devkit.mjs"))) { console.error("找不到 devkit.mjs: " + DEVKIT); process.exit(1); }
 
+const MAN = JSON.parse(fs.readFileSync(path.join(DEVKIT, "devkit.json"), "utf8"));
+const BASE_REPOS = MAN.repos || [MAN.repo];
+const { TERMUX_KEYS, verifyDetached } = await import(pathToFileURL(path.join(DEVKIT, "pgp.mjs")).href);
+
+const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
+async function httpGet(url) {
+  for (let i = 0; ; i++) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(600000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return Buffer.from(await r.arrayBuffer());
+    } catch (e) {
+      if (i >= 5) throw new Error(`${url}: ${e.message}`);
+      await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
+    }
+  }
+}
+
+// 进程内复用 Termux 索引：每个仓库（main / glibc / extraRepos）整次 CI 只拉取、验签、解析一次，
+// 避免为每个 配方 × 底座 重复起子进程拉索引；真正打非 --dry 包时仍调原生 devkit.mjs --out。
+const repoCache = new Map();
+function loadRepoCached(repo) {
+  const key = repo.name || repo.base;
+  if (repoCache.has(key)) return repoCache.get(key);
+  const p = (async () => {
+    const { dist, component, arch } = repo;
+    let relBuf = null, rel = null, gz = null, lastErr = null;
+    for (const base of [repo.base, ...(repo.mirrors || [])]) {
+      try {
+        const buf = await httpGet(`${base}dists/${dist}/Release`);
+        verifyDetached(buf, (await httpGet(`${base}dists/${dist}/Release.gpg`)).toString(), TERMUX_KEYS);
+        relBuf = buf; rel = buf.toString();
+        const rp = `${component}/binary-${arch}/Packages.gz`;
+        const want = rel.split("SHA256:")[1].split("\n").find((l) => l.trim().endsWith(" " + rp));
+        if (!want) throw new Error("Release 里没有 " + rp);
+        gz = await httpGet(`${base}dists/${dist}/${rp}`);
+        if (sha256(gz) !== want.trim().split(/\s+/)[0]) throw new Error("Packages.gz 哈希与 Release 不符");
+        break;
+      } catch (e) { lastErr = e; }
+    }
+    if (!relBuf || !rel || !gz) throw new Error(`${repo.name || "repo"}：所有源的 Release 都没过签名校验（最后：${lastErr && lastErr.message}）`);
+    const date = (rel.match(/^Date: (.+)$/m) || [])[1];
+    const pkgs = new Map(), provides = new Map();
+    for (const blk of zlib.gunzipSync(gz).toString().split("\n\n")) {
+      const f = {};
+      for (const l of blk.split("\n")) { const m = l.match(/^([\w-]+): (.*)$/); if (m) f[m[1]] = m[2]; }
+      if (!f.Package) continue;
+      const pkg = {
+        name: f.Package, version: f.Version, file: f.Filename, sha256: f.SHA256, size: +f.Size,
+        isize: +(f["Installed-Size"] || 0) * 1024, source: f.Source || f.Package, homepage: f.Homepage || "",
+        deps: [f["Pre-Depends"], f.Depends].filter(Boolean).join(", "),
+        repo,
+      };
+      pkgs.set(pkg.name, pkg);
+      for (const v of (f.Provides || "").split(",")) {
+        const n = v.trim().split(/[\s(]/)[0];
+        if (n) { if (!provides.has(n)) provides.set(n, []); provides.get(n).push(pkg.name); }
+      }
+    }
+    return { pkgs, provides, date };
+  })();
+  repoCache.set(key, p);
+  return p;
+}
+
+const indexCache = new Map();
+function loadIndexCached(extraRepoNames = []) {
+  const key = extraRepoNames.join(",");
+  if (indexCache.has(key)) return indexCache.get(key);
+  const p = (async () => {
+    const repos = [...BASE_REPOS];
+    for (const n of extraRepoNames) {
+      if (!MAN.extraRepos || !MAN.extraRepos[n]) throw new Error("不认识的仓库: " + n);
+      repos.push(MAN.extraRepos[n]);
+    }
+    const loaded = await Promise.all(repos.map((repo) => loadRepoCached(repo)));
+    const pkgs = new Map(), provides = new Map(), dates = [];
+    for (let i = 0; i < repos.length; i++) {
+      const one = loaded[i];
+      dates.push(`${repos[i].name || "main"} ${one.date}`);
+      for (const [k, pkg] of one.pkgs) if (!pkgs.has(k)) pkgs.set(k, pkg);
+      for (const [k, v] of one.provides) if (!provides.has(k)) provides.set(k, v);
+    }
+    return { pkgs, provides, date: dates.join(" · ") };
+  })();
+  indexCache.set(key, p);
+  return p;
+}
+
+function closure(idx, roots, exclude = []) {
+  const out = new Set(), missing = [];
+  const manEx = MAN.exclude || [];
+  const pick = (alt) => {
+    for (const a of alt.split("|")) {
+      const n = a.trim().split(/[\s(]/)[0];
+      if (idx.pkgs.has(n)) return n;
+      const pv = idx.provides.get(n);
+      if (pv) return pv[0];
+    }
+    return null;
+  };
+  const walk = (n, from) => {
+    if (out.has(n) || manEx.includes(n) || exclude.includes(n)) return;
+    const p = idx.pkgs.get(n);
+    if (!p) { missing.push(`${n}（${from}）`); return; }
+    out.add(n);
+    for (const d of p.deps.split(",")) {
+      if (!d.trim()) continue;
+      const k = pick(d);
+      if (k) walk(k, n); else missing.push(`${d.trim()}（${n}）`);
+    }
+  };
+  for (const r of roots) walk(pick(r) || r, "清单");
+  return { names: [...out].sort(), missing };
+}
+
+// 与 devkit.mjs loadRecipe + component --dry 保持 100% 等价的版本与闭包校验
+const recipeResolveCache = new Map();
+async function resolveRecipe(r) {
+  if (recipeResolveCache.has(r.id)) return recipeResolveCache.get(r.id);
+  const res = (async () => {
+    if (r.schema !== 1) throw new Error("配方 schema 必须是 1");
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(r.id || "")) throw new Error("配方 id 不合法: " + r.id);
+    if (!["termux", "glibc"].includes(r.kind || "termux")) throw new Error(`kind "${r.kind}" 还不支持（termux / glibc）`);
+    if (!Array.isArray(r.roots) || !r.roots.length) throw new Error("roots 不能为空");
+    if (r.version !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(r.version)) throw new Error("version 不合法: " + r.version);
+    const idx = await loadIndexCached(r.repos || []);
+    const { names, missing } = closure(idx, r.roots, r.exclude || []);
+    if (missing.length) throw new Error("配方的依赖有满足不了的: " + missing.join("; "));
+    const rootPkg = idx.pkgs.get(r.roots[0]);
+    if (!rootPkg) throw new Error("找不到根包: " + r.roots[0]);
+    return {
+      version: `${r.version || rootPkg.version}-r${r.revision || 1}`,
+      names,
+    };
+  })();
+  recipeResolveCache.set(r.id, res);
+  return res;
+}
+
+async function resolveRecipeVersion(r, lock) {
+  const { version, names } = await resolveRecipe(r);
+  const inBase = new Set((lock.packages || []).map((p) => p.name));
+  // 校验底座过滤路径与 devkit.mjs 对齐（不影响最终 version，但确保 lock.packages 合法）
+  names.filter((n) => !inBase.has(n));
+  return version;
+}
+
 const gh = (...a) => run("gh", a);
 const assetsCache = new Map();
+const truncatedTags = new Set();
+let assetsPrefetched = false;
+
+async function prefetchReleaseAssets() {
+  if (ONLY) return;
+  try {
+    const { stdout } = await execFileAsync("gh", [
+      "api", `repos/${REPO}/releases?per_page=100`,
+      "--paginate", "--jq", ".[] | {tag: .tag_name, assets: [.assets[].name]}",
+    ], { encoding: "utf8", maxBuffer: 1 << 28 });
+    for (const line of stdout.split("\n")) {
+      if (!line.trim()) continue;
+      const item = JSON.parse(line);
+      if (!item || typeof item.tag !== "string" || !Array.isArray(item.assets)) continue;
+      if (item.assets.length >= 100) truncatedTags.add(item.tag);
+      else assetsCache.set(item.tag, item.assets);
+    }
+    assetsPrefetched = true;
+  } catch (e) {
+    console.log(`⚠ 批量预拉 Release 资产失败，退回逐标签查询：${e.message}`);
+  }
+}
+
 const assetsOf = (tag) => {
   if (assetsCache.has(tag)) return assetsCache.get(tag);
+  if (assetsPrefetched && !truncatedTags.has(tag)) return null;
   let res = null;
   try { res = JSON.parse(run("gh", ["release", "view", tag, "-R", REPO, "--json", "assets"], { stdio: ["ignore", "pipe", "ignore"] })).assets.map((a) => a.name); } catch {}
   assetsCache.set(tag, res);
   return res;
 };
 
+const allBases = bases();
+const allRecipes = recipes();
+const activeRecipes = allRecipes.filter((r) => (!ONLY || r.id === ONLY) && !r.skipBuild);
+
+// 启动阶段并行完成：批量预拉 Release 资产 + 缺失底座锁文件 + 预热涉及到的 Termux 仓库索引
+const neededExtraRepos = new Set();
+for (const r of activeRecipes) for (const n of r.repos || []) if (MAN.extraRepos && MAN.extraRepos[n]) neededExtraRepos.add(n);
+const warmRepos = [...BASE_REPOS, ...[...neededExtraRepos].map((n) => MAN.extraRepos[n])];
+const missingBases = allBases.filter((b) => !fs.existsSync(path.join(WORK, "bases", b.tag, "devkit.lock.json")));
+
+await Promise.all([
+  prefetchReleaseAssets(),
+  Promise.all(warmRepos.map((repo) => loadRepoCached(repo).catch(() => {}))),
+  (async () => {
+    if (!missingBases.length) return;
+    let i = 0;
+    await Promise.all(Array.from({ length: Math.min(4, missingBases.length) }, async () => {
+      while (i < missingBases.length) {
+        const b = missingBases[i++];
+        const bdir = path.join(WORK, "bases", b.tag);
+        fs.mkdirSync(bdir, { recursive: true });
+        await execFileAsync("gh", ["release", "download", b.tag, "-R", APP_REPO, "-p", "devkit.lock.json", "-D", bdir, "--clobber"], { encoding: "utf8", maxBuffer: 1 << 26 });
+      }
+    }));
+  })(),
+]);
+
 let built = 0, failed = 0;
-for (const b of bases()) {
+for (const b of allBases) {
   const bdir = path.join(WORK, "bases", b.tag);
   const lockFile = path.join(bdir, "devkit.lock.json");
   if (!fs.existsSync(lockFile)) { fs.mkdirSync(bdir, { recursive: true }); gh("release", "download", b.tag, "-R", APP_REPO, "-p", "devkit.lock.json", "-D", bdir, "--clobber"); }
   const lock = JSON.parse(fs.readFileSync(lockFile, "utf8"));
   const baseSha = lock.gz.sha256;
   console.log(`\n══ 底座 ${b.tag}（${baseSha.slice(0, 12)}，${lock.target}）`);
-  for (const r of recipes()) {
-    if (opt("only") && r.id !== opt("only")) continue;
+  for (const r of allRecipes) {
+    if (ONLY && r.id !== ONLY) continue;
     if (r.skipBuild) { console.log(`· ${r.id}: 跳过构建（${r.skipBuild}）`); continue; }
     if (r.minBase && !baseAtLeast(b.tag, r.minBase)) { console.log(`· ${r.id}: 跳过旧底座 ${b.tag}（需 ≥ ${r.minBase}）`); continue; }
     const dk = (extra) => run("node", [path.join(DEVKIT, "devkit.mjs"), "component", "--recipe", r.dir, "--target", lock.target, "--base", lockFile, ...extra], { stdio: ["ignore", "pipe", "inherit"] });
     let version;
-    try { version = /COMPONENT_VERSION=(\S+)/.exec(dk(["--dry"]))[1]; }
-    catch (e) { console.log(`✗ ${r.id}: 依赖解析失败`); failed++; continue; }
+    try { version = await resolveRecipeVersion(r, lock); }
+    catch (e) { console.log(`✗ ${r.id}: 依赖解析失败（${e.message}）`); failed++; continue; }
     const name = asset(r.id, version, baseSha);
     const have = assetsOf(r.id);
     if (have && have.includes(name + ".tar.gz") && have.includes(name + ".json")) { console.log(`· ${name} 已发布，跳过`); continue; }
