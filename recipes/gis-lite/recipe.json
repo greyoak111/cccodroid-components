@@ -16,7 +16,7 @@
   "selftest": "gis-lite-selftest",
   "needs": { "shizuku": false, "display": false, "gpu": false },
   "category": "science",
-  "license": "MIT AND LGPL-2.1 AND GPL-2.0",
+  "license": "MIT AND LGPL-2.1-or-later AND GPL-2.0-or-later",
   "homepage": "https://proj.org",
   "maintainers": ["greyoak111"],
   "files": {

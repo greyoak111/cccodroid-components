@@ -116,7 +116,7 @@ const ANDROID_LIBS = new Set(["libc.so", "libm.so", "libdl.so", "liblog.so", "li
   "libnativewindow.so", "libsync.so", "libneuralnetworks.so", "libOpenMAXAL.so", "libstdc++.so", "libaaudio.so", "libamidi.so",
   "libbinder_ndk.so", "libicu.so", "libvndksupport.so"]);
 // 安卓系统库仅限系统/APEX 标准库目录，避免任意绝对路径同名误放行
-const ANDROID_SYS_DIR = /^\/(?:system|apex\/com\.android\.(?:runtime|art))\/lib(?:64)?\//;
+const ANDROID_SYS_DIR = /^\/(?:system|apex\/com\.android\.(?:runtime|art|i18n))\/lib(?:64)?\//;
 // 厂商库：只在部分设备的 /vendor 里有（骁龙的 OpenCL 等），链了它的东西只能在那些设备上用 —— 提醒，不拦
 const VENDOR_LIBS = new Set(["libOpenCL.so", "libcdsprpc.so", "libQnnHtp.so", "libQnnSystem.so"]);
 const SHELL_BUILTINS = new Set(["cd", "echo", "test", "[", "true", "false", "printf", "export", "env", "sh", "bash", "command", "exec", "set"]);
@@ -183,7 +183,7 @@ const report = [`## 组件审计报告`, ``, `底座 \`${base.tag}\`（${base12}
 for (const id of ids) {
   const r = byId.get(id);
   if (!r) { report.push(`### ❌ ${id}`, "", "仓库里没有这个配方", ""); fails++; continue; }
-  if (r.skipBuild) { report.push(`### ⏭ ${id}`, "", `跳过审计（${r.skipBuild}）`, ""); continue; }
+  if (r.skipBuild) { report.push(`### ⏭ ${id}`, "", `跳过构建与二进制审计（未审计：${r.skipBuild}）`, ""); continue; }
   if (r.minBase && !baseAtLeast(base.tag, r.minBase)) { report.push(`### ⏭ ${id}`, "", `跳过底座 \`${base.tag}\`（需 ≥ \`${r.minBase}\`）`, ""); continue; }
   console.log(`\n══ ${id}`);
   const b = build(id);
@@ -240,9 +240,10 @@ for (const id of ids) {
         // 改写前缀后是 /data/data/cc.codroid/files/usr/lib/libsqlite3.so）：先换算成 usr/… 再查，
         // 别把它当成"哪里都找不到"。绝对路径不在应用前缀里的照旧按原样报。
         const abs = n0.startsWith("/");
+        const normAbs = abs ? path.posix.normalize(n0) : "";
         const n = path.posix.normalize(abs ? rel(n0) : n0);
         const bn = path.posix.basename(n);
-        if (!glibc && ((!abs && ANDROID_LIBS.has(n)) || (abs && ANDROID_SYS_DIR.test(n0) && ANDROID_LIBS.has(bn)))) continue;
+        if (!glibc && ((!abs && ANDROID_LIBS.has(n)) || (abs && ANDROID_SYS_DIR.test(normAbs) && ANDROID_LIBS.has(bn)))) continue;
         if (abs) {
           if (has(n)) { if (b.names.has(n)) node.deps.push(n); continue; }
         } else {

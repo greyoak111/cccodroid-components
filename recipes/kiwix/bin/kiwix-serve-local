@@ -1,11 +1,13 @@
 #!{{PREFIX}}/bin/sh
 # 与 kiwix-serve 相同，但默认只监听 127.0.0.1（上游默认是 --address=all，会监听 0.0.0.0）。
-# 用户自己显式写了 -i / --address、或无参/仅查帮助版本时直接原样透传（docopt 不接受在 -h/-V 前加选项）。
+# 用户自己显式写了 -i / --address 或无参时原样透传；遇到 -h/--help/-V/--version 仅单传对应标志，防止与其它参数混用绕过 127.0.0.1 默认绑定。
 [ $# -eq 0 ] && exec "{{PREFIX}}/bin/kiwix-serve"
 for a in "$@"; do
   case "$a" in
     --) break ;;
-    --address|--address=*|-i|-i?*|-h|--help|-V|--version) exec "{{PREFIX}}/bin/kiwix-serve" "$@" ;;
+    -h|--help) exec "{{PREFIX}}/bin/kiwix-serve" --help ;;
+    -V|--version) exec "{{PREFIX}}/bin/kiwix-serve" --version ;;
+    --address|--address=*|-i|-i?*) exec "{{PREFIX}}/bin/kiwix-serve" "$@" ;;
   esac
 done
 exec "{{PREFIX}}/bin/kiwix-serve" --address=127.0.0.1 "$@"

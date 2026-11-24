@@ -16,8 +16,18 @@ export const bases = () => JSON.parse(fs.readFileSync(path.join(ROOT, "bases.jso
 export const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", maxBuffer: 1 << 28, ...opts });
 // 版本号里的 : ~ + 之类 GitHub 资产名会改掉，统一换成 _
 export const asset = (id, version, baseSha) => `${id}-${String(version).replace(/[^A-Za-z0-9._-]/g, "_")}-for-${baseSha.slice(0, 12)}`;
-// 底座 tag 版本比较（devkit-2026.10.28 < devkit-2026.11.21 <= devkit-2026.11.21.2）
-export const baseAtLeast = (tag, minTag) => String(tag).localeCompare(String(minTag), "en", { numeric: true }) >= 0;
+// 底座 tag 版本比较（纯数值分段比较，不依赖 ICU；如 devkit-2026.10.28 < devkit-2026.11.21 <= devkit-2026.11.21.2）
+export function baseAtLeast(tag, minTag) {
+  const a = String(tag).match(/\d+/g)?.map(Number);
+  const b = String(minTag).match(/\d+/g)?.map(Number);
+  if (!a || !b) return String(tag) >= String(minTag);
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const av = a[i] ?? 0, bv = b[i] ?? 0;
+    if (av !== bv) return av > bv;
+  }
+  return true;
+}
 // 组件附带的模型目录（目前只有 llama-cpp 用）：recipes/<id>/models.json，进签名索引，App 的「下载模型」按它列。
 // 索引签了名，sha256 就可信；repo / file 严格限字符，App 拿它们拼下载地址（魔搭 / HF / hf-mirror），不许塞路径或别的站。
 export const MODEL_TAGS = new Set(["think", "code"]);

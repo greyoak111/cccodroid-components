@@ -18,7 +18,7 @@
   "needs": { "shizuku": false, "display": false, "gpu": false },
   "minBase": "devkit-2026.11.21",
   "category": "science",
-  "license": "MIT AND LGPL-2.1 AND GPL-2.0 AND Apache-2.0 AND BSD-3-Clause AND Zlib AND PostgreSQL",
+  "license": "MIT AND LGPL-2.1-or-later AND GPL-2.0-or-later AND Apache-2.0 AND BSD-3-Clause AND Zlib AND PostgreSQL",
   "homepage": "https://gdal.org",
   "maintainers": ["greyoak111"],
   "files": {

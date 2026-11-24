@@ -21,6 +21,7 @@ const opt = (k) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 
 const DEVKIT = path.resolve(opt("devkit") || "../cccodroid/devkit");
 const ONLY = opt("only");
 const DRY = args.includes("--dry"), UPLOAD = !args.includes("--no-upload") && !DRY;
+const NO_SENTINEL = args.includes("--no-sentinel");
 const WORK = path.resolve(process.env.WORK || path.join(ROOT, "work"));
 if (!fs.existsSync(path.join(DEVKIT, "devkit.mjs"))) { console.error("找不到 devkit.mjs: " + DEVKIT); process.exit(1); }
 
@@ -84,7 +85,7 @@ function loadRepoCached(repo) {
       }
     }
     return { pkgs, provides, date };
-  })();
+  })().catch((e) => { repoCache.delete(key); throw e; });
   repoCache.set(key, p);
   return p;
 }
@@ -108,7 +109,7 @@ function loadIndexCached(extraRepoNames = []) {
       for (const [k, v] of one.provides) if (!provides.has(k)) provides.set(k, v);
     }
     return { pkgs, provides, date: dates.join(" · ") };
-  })();
+  })().catch((e) => { indexCache.delete(key); throw e; });
   indexCache.set(key, p);
   return p;
 }
@@ -140,35 +141,83 @@ function closure(idx, roots, exclude = []) {
   return { names: [...out].sort(), missing };
 }
 
-// 与 devkit.mjs loadRecipe + component --dry 保持 100% 等价的版本与闭包校验
+const PIP_URL = /^https:\/\/files\.pythonhosted\.org\/packages\/[0-9a-f/]+\/[A-Za-z0-9_.]+-[A-Za-z0-9_.+!]+-(?:py3|py2\.py3)-none-any\.whl$/;
+const ARCHIVE_EXT = [["tar.gz", /\.(tar\.gz|tgz)$/], ["tar.xz", /\.(tar\.xz|txz)$/], ["tar.bz2", /\.(tar\.bz2|tbz2?)$/], ["tar", /\.tar$/], ["zip", /\.zip$/]];
+const relOk = (s) => typeof s === "string" && s && !s.startsWith("/") && !s.split("/").includes("..");
+function archiveFormat(f, p) {
+  const x = f.extract;
+  if (!x || typeof x !== "object" || Array.isArray(x)) throw new Error("fetch 的 extract 要写成对象（可以是 {}）: " + p);
+  for (const k of Object.keys(x)) if (!["format", "strip", "include", "exec"].includes(k)) throw new Error(`fetch 的 extract 不认 ${k}: ` + p);
+  if (x.strip !== undefined && !(Number.isInteger(x.strip) && x.strip >= 0 && x.strip <= 5)) throw new Error("extract.strip 是 0–5 的整数: " + p);
+  for (const k of ["include", "exec"]) if (x[k] !== undefined && !(Array.isArray(x[k]) && x[k].length && x[k].every(relOk))) throw new Error(`extract.${k} 要写成相对路径的数组（不许绝对路径、不许 ..）: ` + p);
+  const fmt = x.format || (ARCHIVE_EXT.find(([, re]) => re.test(new URL(f.url).pathname)) || [])[0];
+  if (!ARCHIVE_EXT.some(([n]) => n === fmt)) throw new Error("认不出压缩格式，写 extract.format（tar.gz / tar.xz / tar.bz2 / tar / zip）: " + p);
+  return fmt;
+}
+
+// 与 devkit.mjs loadRecipe + component --dry 保持 100% 等价的字段、版本与闭包校验
+function validateRecipeForDevkit(r) {
+  if (r.schema !== 1) throw new Error("配方 schema 必须是 1");
+  if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(r.id || "")) throw new Error("配方 id 不合法: " + r.id);
+  if (!["termux", "glibc"].includes(r.kind || "termux")) throw new Error(`kind "${r.kind}" 还不支持（termux / glibc）`);
+  if (!Array.isArray(r.roots) || !r.roots.length) throw new Error("roots 不能为空");
+  for (const n of r.repos || []) if (!MAN.extraRepos || !MAN.extraRepos[n]) throw new Error("不认识的仓库: " + n);
+  for (const [p, f] of Object.entries(r.files || {})) {
+    if (!p.startsWith("usr/") || p.includes("..")) throw new Error("files 只能放进 usr/ 下: " + p);
+    if (!f || typeof f.src !== "string" || !f.src || path.isAbsolute(f.src) || f.src.split(/[\\/]/).includes("..")) throw new Error("files 的 src 只能是配方目录里的相对路径: " + p);
+  }
+  if (r.version !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(r.version)) throw new Error("version 不合法: " + r.version);
+  for (const [p, f] of Object.entries(r.fetch || {})) {
+    if (!p.startsWith("usr/") || p.includes("..")) throw new Error("fetch 只能放进 usr/ 下: " + p);
+    if (f.link !== undefined) {
+      if (!/^[A-Za-z0-9._+-]+$/.test(f.link) || f.link === "." || f.link === ".." || f.url || f.sha256) throw new Error("fetch 的 link 只能是同目录的文件名，且不带 url/sha256: " + p);
+      continue;
+    }
+    if (!/^https:\/\/\S+$/.test(f.url || "")) throw new Error("fetch 的 url 必须是 https: " + p);
+    if (!/^[0-9a-f]{64}$/.test(f.sha256 || "")) throw new Error("fetch 的 sha256 要写全: " + p);
+    if (!f.why) throw new Error("fetch 要写 why: " + p);
+    if (f.mode !== undefined && !/^[0-7]{3,4}$/.test(String(f.mode))) throw new Error("fetch 的 mode 是八进制三位/四位: " + p);
+    if ((f.extract !== undefined) !== p.endsWith("/")) throw new Error("fetch 解压包的键要以 / 结尾（落地目录），且要写 extract: " + p);
+    if (f.extract !== undefined) {
+      if (f.mode !== undefined) throw new Error("fetch 解压包不收 mode（权限取包里的，补执行位用 extract.exec）: " + p);
+      archiveFormat(f, p);
+    }
+  }
+  if (r.pip !== undefined) {
+    if (!r.pip || !r.pip.why || !Array.isArray(r.pip.wheels) || !r.pip.wheels.length) throw new Error("pip 要写成 { why, wheels: [{ url, sha256 }] }");
+    for (const w of r.pip.wheels) {
+      if (!PIP_URL.test(w.url || "")) throw new Error("pip 的 wheel 只能是 files.pythonhosted.org 上的纯 Python 包（*-none-any.whl）: " + w.url);
+      if (!/^[0-9a-f]{64}$/.test(w.sha256 || "")) throw new Error("pip 的 sha256 要写全: " + w.url);
+    }
+  }
+  if (r.npm !== undefined) {
+    if (!/^usr\/lib\/[a-z0-9][a-z0-9._-]*$/.test((r.npm && r.npm.dir) || "")) throw new Error("npm.dir 只能是 usr/lib/<名字>");
+    if (!r.npm.why) throw new Error("npm 要写 why");
+    for (const f of ["package.json", "package-lock.json"]) if (!fs.existsSync(path.join(r.dir, f))) throw new Error("npm 型组件缺 " + f);
+  }
+}
+
 const recipeResolveCache = new Map();
 async function resolveRecipe(r) {
   if (recipeResolveCache.has(r.id)) return recipeResolveCache.get(r.id);
   const res = (async () => {
-    if (r.schema !== 1) throw new Error("配方 schema 必须是 1");
-    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(r.id || "")) throw new Error("配方 id 不合法: " + r.id);
-    if (!["termux", "glibc"].includes(r.kind || "termux")) throw new Error(`kind "${r.kind}" 还不支持（termux / glibc）`);
-    if (!Array.isArray(r.roots) || !r.roots.length) throw new Error("roots 不能为空");
-    if (r.version !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(r.version)) throw new Error("version 不合法: " + r.version);
+    validateRecipeForDevkit(r);
     const idx = await loadIndexCached(r.repos || []);
-    const { names, missing } = closure(idx, r.roots, r.exclude || []);
+    const { missing } = closure(idx, r.roots, r.exclude || []);
     if (missing.length) throw new Error("配方的依赖有满足不了的: " + missing.join("; "));
     const rootPkg = idx.pkgs.get(r.roots[0]);
     if (!rootPkg) throw new Error("找不到根包: " + r.roots[0]);
     return {
       version: `${r.version || rootPkg.version}-r${r.revision || 1}`,
-      names,
     };
-  })();
+  })().catch((e) => { recipeResolveCache.delete(r.id); throw e; });
   recipeResolveCache.set(r.id, res);
   return res;
 }
 
 async function resolveRecipeVersion(r, lock) {
-  const { version, names } = await resolveRecipe(r);
-  const inBase = new Set((lock.packages || []).map((p) => p.name));
-  // 校验底座过滤路径与 devkit.mjs 对齐（不影响最终 version，但确保 lock.packages 合法）
-  names.filter((n) => !inBase.has(n));
+  if (!Array.isArray(lock?.packages)) throw new Error("底座锁文件缺 packages");
+  const { version } = await resolveRecipe(r);
   return version;
 }
 
@@ -200,10 +249,18 @@ async function prefetchReleaseAssets() {
 const assetsOf = (tag) => {
   if (assetsCache.has(tag)) return assetsCache.get(tag);
   if (assetsPrefetched && !truncatedTags.has(tag)) return null;
-  let res = null;
-  try { res = JSON.parse(run("gh", ["release", "view", tag, "-R", REPO, "--json", "assets"], { stdio: ["ignore", "pipe", "ignore"] })).assets.map((a) => a.name); } catch {}
-  assetsCache.set(tag, res);
-  return res;
+  let rel;
+  try {
+    rel = JSON.parse(run("gh", ["api", `repos/${REPO}/releases/tags/${encodeURIComponent(tag)}`], { stdio: ["ignore", "pipe", "pipe"] }));
+  } catch (e) {
+    const msg = String(e.stderr || e.message || "");
+    if (/\b404\b|Not Found/i.test(msg)) { assetsCache.set(tag, null); return null; }
+    throw new Error(`查询 Release ${tag} 失败：${msg.split("\n")[0]}`);
+  }
+  const list = run("gh", ["api", `repos/${REPO}/releases/${rel.id}/assets?per_page=100`, "--paginate", "--jq", ".[].name"], { stdio: ["ignore", "pipe", "pipe"] })
+    .split("\n").map((s) => s.trim()).filter(Boolean);
+  assetsCache.set(tag, list);
+  return list;
 };
 
 const allBases = bases();
@@ -233,7 +290,7 @@ await Promise.all([
   })(),
 ]);
 
-let built = 0, failed = 0;
+let built = 0, failed = 0, sentinelTarget = null;
 for (const b of allBases) {
   const bdir = path.join(WORK, "bases", b.tag);
   const lockFile = path.join(bdir, "devkit.lock.json");
@@ -249,8 +306,11 @@ for (const b of allBases) {
     let version;
     try { version = await resolveRecipeVersion(r, lock); }
     catch (e) { console.log(`✗ ${r.id}: 依赖解析失败（${e.message}）`); failed++; continue; }
+    if (DRY && !NO_SENTINEL && !sentinelTarget) sentinelTarget = { r, tag: b.tag, target: lock.target, lockFile, version };
     const name = asset(r.id, version, baseSha);
-    const have = assetsOf(r.id);
+    let have;
+    try { have = assetsOf(r.id); }
+    catch (e) { console.log(`✗ ${r.id}: ${e.message}`); failed++; continue; }
     if (have && have.includes(name + ".tar.gz") && have.includes(name + ".json")) { console.log(`· ${name} 已发布，跳过`); continue; }
     console.log(`▶ ${name}`);
     if (DRY) continue;
@@ -259,6 +319,11 @@ for (const b of allBases) {
     try { process.stdout.write(dk(["--out", out])); }
     catch (e) { console.log(`✗ ${r.id}: 构建失败`); failed++; continue; }
     const meta = JSON.parse(fs.readFileSync(path.join(out, `component-${r.id}.json`), "utf8"));
+    if (meta.version !== version) {
+      console.log(`✗ ${r.id}: 版本复算不一致（ci-build=${version} vs devkit=${meta.version}）`);
+      failed++;
+      continue;
+    }
     const gz = path.join(out, name + ".tar.gz"), js = path.join(out, name + ".json");
     fs.renameSync(path.join(out, meta.gz.file), gz);
     fs.rmSync(path.join(out, meta.tar.file), { force: true });
@@ -268,13 +333,35 @@ for (const b of allBases) {
     fs.writeFileSync(js, JSON.stringify(meta, null, 1) + "\n");
     built++;
     if (!UPLOAD) continue;
-    if (!have) gh("release", "create", r.id, "-R", REPO, "--title", `${r.id} · ${r.name.en}`, "--notes", `${r.name.zh} / ${r.name.en}\n\n${r.desc.zh}\n\n${r.desc.en}`, "--latest=false");
+    if (!have) {
+      try {
+        gh("release", "create", r.id, "-R", REPO, "--title", `${r.id} · ${r.name.en}`, "--notes", `${r.name.zh} / ${r.name.en}\n\n${r.desc.zh}\n\n${r.desc.en}`, "--latest=false");
+      } catch (e) {
+        if (!/already exists/i.test(String(e.stderr || e.message || ""))) throw e;
+      }
+    }
     // 先传包再传清单：build-index 只认有清单的构建，半截上传不会进索引
     gh("release", "upload", r.id, "-R", REPO, gz, "--clobber");
     gh("release", "upload", r.id, "-R", REPO, js, "--clobber");
     assetsCache.set(r.id, [...(have || []), path.basename(gz), path.basename(js)]);
     fs.rmSync(gz);
     console.log(`  ↑ 已上传`);
+  }
+}
+if (DRY && !NO_SENTINEL && failed === 0 && sentinelTarget) {
+  const { r, tag, target, lockFile, version } = sentinelTarget;
+  try {
+    const out = run("node", [path.join(DEVKIT, "devkit.mjs"), "component", "--recipe", r.dir, "--target", target, "--base", lockFile, "--dry"], { stdio: ["ignore", "pipe", "pipe"] });
+    const nativeVer = /COMPONENT_VERSION=(\S+)/.exec(out)?.[1];
+    if (nativeVer !== version) {
+      console.log(`\n✗ 原生漂移哨兵不一致（${r.id}@${tag}: ci-build=${version} vs devkit=${nativeVer || "未知"}）`);
+      failed++;
+    } else {
+      console.log(`\n✓ 原生漂移哨兵通过（${r.id}@${tag}: ${version}）`);
+    }
+  } catch (e) {
+    console.log(`\n✗ 原生漂移哨兵执行失败（${r.id}@${tag}）：${e.message}`);
+    failed++;
   }
 }
 console.log(`\n打了 ${built} 个，失败 ${failed} 个`);

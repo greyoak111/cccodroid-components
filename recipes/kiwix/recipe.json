@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "kiwix",
   "kind": "termux",
-  "revision": 1,
+  "revision": 2,
   "name": {
     "zh": "Kiwix（离线 ZIM 知识库）",
     "en": "Kiwix (offline ZIM knowledge bases)"

@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { ROOT, REPO, APP_REPO, recipes, run, asset, modelsOf, baseAtLeast } from "./lib.mjs";
+import { ROOT, REPO, APP_REPO, recipes, bases, run, asset, modelsOf, baseAtLeast } from "./lib.mjs";
 
 // 兜底 ABI 策略（若通过 --devkit 指向了 cccodroid/devkit，会直接读取那里的 abi-policy.json）
 const FALLBACK_ABI_POLICY = {
@@ -186,12 +186,26 @@ function main() {
       }
       const lock = JSON.parse(fs.readFileSync(path.join(d, "devkit.lock.json"), "utf8"));
       parsed = {
+        gz: lock.gz?.sha256 || "",
         pkgs: new Map((lock.packages || []).map((p) => [p.name, p.version])),
         sonames: lock.abi?.sonames || null,
       };
     } catch {}
     locks.set(tag, parsed);
     return parsed;
+  }
+
+  let baseTagMap = null;
+  function tagByBaseGz(gzSha) {
+    if (!gzSha) return "";
+    if (!baseTagMap) {
+      baseTagMap = new Map();
+      for (const b of bases()) {
+        const lk = baseLock(b.tag);
+        if (lk?.gz) baseTagMap.set(lk.gz, b.tag);
+      }
+    }
+    return baseTagMap.get(gzSha) || "";
   }
 
   const vcmp = (a, b) => a.localeCompare(b, "en", { numeric: true });
@@ -209,9 +223,16 @@ function main() {
       const m = JSON.parse(fs.readFileSync(path.join(dl, f), "utf8"));
       const name = asset(m.id, m.version, m.base.gz);
       if (m.id !== r.id || !names.has(name + ".tar.gz")) continue;       // 包没传完的不收
-      if (r.minBase && m.base?.tag && !baseAtLeast(m.base.tag, r.minBase)) {
-        console.log(`· ${r.id}: 索引跳过旧底座清单 ${m.base.tag}（需 ≥ ${r.minBase}）`);
-        continue;
+      if (r.minBase) {
+        const baseTag = m.base?.tag || tagByBaseGz(m.base?.gz);
+        if (!baseTag) {
+          console.log(`· ${r.id}: 索引跳过缺 base.tag 的清单（${f}，需 ≥ ${r.minBase}）`);
+          continue;
+        }
+        if (!baseAtLeast(baseTag, r.minBase)) {
+          console.log(`· ${r.id}: 索引跳过旧底座清单 ${baseTag}（需 ≥ ${r.minBase}）`);
+          continue;
+        }
       }
       all.push(m);
       const cur = byBase.get(m.base.gz);
